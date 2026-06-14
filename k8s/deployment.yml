@@ -1,0 +1,278 @@
+---
+# ── Namespace ──────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: transport-office
+  labels:
+    app.kubernetes.io/name: aatdrs
+    app.kubernetes.io/managed-by: kubectl
+
+---
+# ── ConfigMap (non-secret env vars) ───────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aatdrs-config
+  namespace: transport-office
+data:
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  NODE_ENV: "production"
+  PORT: "3000"
+
+---
+# ── Secret (created out-of-band via kubectl create secret) ────────────────────
+# kubectl create secret generic aatdrs-secrets \
+#   --from-literal=DATABASE_URL='...' \
+#   --from-literal=JWT_SECRET='...' \
+#   --from-literal=JWT_REFRESH_SECRET='...' \
+#   --from-literal=OVERRIDE_HMAC_SECRET='...' \
+#   -n transport-office
+
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# REDIS
+# ═══════════════════════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: transport-office
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          resources:
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: transport-office
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# NESTJS BACKEND
+# ═══════════════════════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aatdrs-backend
+  namespace: transport-office
+  labels:
+    app: aatdrs-backend
+    version: "1.0.0"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: aatdrs-backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0        # Zero-downtime rolling deploys
+  template:
+    metadata:
+      labels:
+        app: aatdrs-backend
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: backend
+          image: ghcr.io/addis-transport/roster-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: aatdrs-config
+            - secretRef:
+                name: aatdrs-secrets
+          resources:
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /api/docs
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/docs
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aatdrs-backend-service
+  namespace: transport-office
+spec:
+  selector:
+    app: aatdrs-backend
+  ports:
+    - port: 80
+      targetPort: 3000
+
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEXT.JS PWA FRONTEND
+# ═══════════════════════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aatdrs-frontend
+  namespace: transport-office
+  labels:
+    app: aatdrs-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: aatdrs-frontend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: aatdrs-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: ghcr.io/addis-transport/roster-frontend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NEXT_PUBLIC_API_URL
+              value: "https://api.aatdrs.gov.et"
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aatdrs-frontend-service
+  namespace: transport-office
+spec:
+  selector:
+    app: aatdrs-frontend
+  ports:
+    - port: 80
+      targetPort: 3000
+
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# INGRESS (Nginx Ingress Controller with TLS)
+# ═══════════════════════════════════════════════════════════════════════════════
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aatdrs-ingress
+  namespace: transport-office
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/limit-rps: "30"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "90"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - aatdrs.gov.et
+        - api.aatdrs.gov.et
+      secretName: aatdrs-tls-secret
+  rules:
+    - host: api.aatdrs.gov.et
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: aatdrs-backend-service
+                port:
+                  number: 80
+    - host: aatdrs.gov.et
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: aatdrs-frontend-service
+                port:
+                  number: 80
+
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# HORIZONTAL POD AUTOSCALER – Backend
+# ═══════════════════════════════════════════════════════════════════════════════
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: aatdrs-backend-hpa
+  namespace: transport-office
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: aatdrs-backend
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75

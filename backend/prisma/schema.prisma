@@ -1,0 +1,281 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum RoleName {
+  SUPER_ADMIN
+  TRANSPORT_OFFICE_ADMIN
+  TERMINAL_ADMIN
+  SUPERVISOR
+  DISPATCHER
+  AUDITOR
+  FINANCE_OFFICER
+  SYSTEM_SUPPORT
+}
+
+enum VehicleStatus {
+  ACTIVE
+  SUSPENDED
+  MAINTENANCE
+  INACTIVE
+}
+
+enum QueueStatus {
+  PENDING
+  DISPATCHED
+  SKIPPED
+  EXPIRED
+}
+
+enum OverrideType {
+  VEHICLE_SKIP
+  FORCE_DISPATCH
+  ROUTE_TEMPORARY_CHANGE
+}
+
+enum ViolationType {
+  ROUTE_HOPPING
+  UNAUTHORIZED_TERMINAL
+  DUPLICATE_CHECKIN
+  SUSPICIOUS_INTERVAL
+}
+
+model User {
+  id           String        @id @default(uuid())
+  username     String        @unique
+  email        String        @unique
+  passwordHash String
+  pinHash      String?       // Encrypted PIN for Supervisors/Dispatchers
+  roleName     RoleName
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  
+  // Relations
+  terminalAssignments UserTerminalAssignment[]
+  auditLogs           AuditLog[]
+  overrides           OverrideLog[]          @relation("SupervisorOverrides")
+  dispatches          DispatchRecord[]       @relation("DispatcherDispatches")
+
+  @@map("users")
+}
+
+model Terminal {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  location  String   // Latitude/Longitude coordinate string or description
+  code      String   @unique // e.g., "MEY-01" for Megenagna Terminal 1
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  routes              TerminalRoute[]
+  userAssignments     UserTerminalAssignment[]
+  queues              QueueEntry[]
+  dispatches          DispatchRecord[]
+  devices             DeviceBinding[]
+
+  @@map("terminals")
+}
+
+model UserTerminalAssignment {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  terminalId String   @map("terminal_id")
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  terminal Terminal @relation(fields: [terminalId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, terminalId])
+  @@map("user_terminal_assignments")
+}
+
+model Route {
+  id           String   @id @default(uuid())
+  code         String   @unique // e.g., "R-005"
+  origin       String
+  destination  String
+  baseFareETB  Decimal  @db.Decimal(10, 2) @map("base_fare_etb")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  terminals          TerminalRoute[]
+  vehicleAssignments VehicleRouteAssignment[]
+  dispatches         DispatchRecord[]
+  queues             QueueEntry[]
+
+  @@map("routes")
+}
+
+model TerminalRoute {
+  id         String   @id @default(uuid())
+  terminalId String   @map("terminal_id")
+  routeId    String   @map("route_id")
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  terminal Terminal @relation(fields: [terminalId], references: [id], onDelete: Cascade)
+  route    Route    @relation(fields: [routeId], references: [id], onDelete: Cascade)
+
+  @@unique([terminalId, routeId])
+  @@map("terminal_routes")
+}
+
+model Vehicle {
+  id          String        @id @default(uuid())
+  plateNumber String        @unique @map("plate_number") // e.g., "AA-3-A78921"
+  ownerName   String        @map("owner_name")
+  ownerPhone  String        @map("owner_phone")
+  capacity    Int           @default(12)
+  status      VehicleStatus @default(ACTIVE)
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  routeAssignments VehicleRouteAssignment[]
+  queues           QueueEntry[]
+  dispatches       DispatchRecord[]
+  violations       ViolationRecord[]
+
+  @@map("vehicles")
+}
+
+model VehicleRouteAssignment {
+  id         String   @id @default(uuid())
+  vehicleId  String   @map("vehicle_id")
+  routeId    String   @map("route_id")
+  assignedAt DateTime @default(now()) @map("assigned_at")
+  expiresAt  DateTime @map("expires_at")
+
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  route   Route   @relation(fields: [routeId], references: [id], onDelete: Cascade)
+
+  @@index([vehicleId, routeId])
+  @@map("vehicle_route_assignments")
+}
+
+model QueueEntry {
+  id         String      @id @default(uuid())
+  terminalId String      @map("terminal_id")
+  routeId    String      @map("route_id")
+  vehicleId  String      @map("vehicle_id")
+  checkInTime DateTime   @default(now()) @map("check_in_time")
+  status     QueueStatus @default(PENDING)
+  sequence   Int
+  syncId     String?     @unique @map("sync_id")
+
+  // Relations
+  terminal Terminal @relation(fields: [terminalId], references: [id])
+  route    Route    @relation(fields: [routeId], references: [id])
+  vehicle  Vehicle  @relation(fields: [vehicleId], references: [id])
+  override OverrideLog?
+
+  @@index([terminalId, routeId, status, checkInTime])
+  @@index([vehicleId, status])
+  @@map("queue_entries")
+}
+
+model DispatchRecord {
+  id                    String   @id @default(uuid())
+  terminalId            String   @map("terminal_id")
+  routeId               String   @map("route_id")
+  vehicleId             String   @map("vehicle_id")
+  dispatcherId          String   @map("dispatcher_id")
+  dispatchTime          DateTime @default(now()) @map("dispatch_time")
+  fareChargedETB        Decimal  @db.Decimal(10, 2) @map("fare_charged_etb")
+  municipalCommission   Decimal  @db.Decimal(10, 2) @default(10.00) @map("municipal_commission")
+  platformCommission    Decimal  @db.Decimal(10, 2) @default(1.00) @map("platform_commission")
+  isReconciled          Boolean  @default(false) @map("is_reconciled")
+  syncId                String?  @unique @map("sync_id")
+
+  // Relations
+  terminal   Terminal @relation(fields: [terminalId], references: [id])
+  route      Route    @relation(fields: [routeId], references: [id])
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id])
+  dispatcher User     @relation("DispatcherDispatches", fields: [dispatcherId], references: [id])
+
+  @@index([terminalId, routeId, dispatchTime])
+  @@index([isReconciled, dispatchTime])
+  @@map("dispatch_records")
+}
+
+model OverrideLog {
+  id           String       @id @default(uuid())
+  queueEntryId String       @unique @map("queue_entry_id")
+  supervisorId String       @map("supervisor_id")
+  overrideType OverrideType @map("override_type")
+  reason       String
+  timestamp    DateTime     @default(now())
+  signature    String
+
+  // Relations
+  queueEntry QueueEntry @relation(fields: [queueEntryId], references: [id], onDelete: Cascade)
+  supervisor User       @relation("SupervisorOverrides", fields: [supervisorId], references: [id])
+
+  @@map("override_logs")
+}
+
+model ViolationRecord {
+  id            String        @id @default(uuid())
+  vehicleId     String        @map("vehicle_id")
+  violationType ViolationType @map("violation_type")
+  details       String
+  severityScore Int           @default(0) @map("severity_score")
+  timestamp     DateTime      @default(now())
+  resolved      Boolean       @default(false)
+  resolvedAt    DateTime?     @map("resolved_at")
+
+  // Relations
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([vehicleId, violationType, timestamp])
+  @@map("violation_records")
+}
+
+model DeviceBinding {
+  id           String   @id @default(uuid())
+  terminalId   String   @map("terminal_id")
+  deviceUuid   String   @unique @map("device_uuid")
+  publicKey    String   @map("public_key")
+  isApproved   Boolean  @default(false) @map("is_approved")
+  registeredAt DateTime @default(now()) @map("registered_at")
+  lastActiveAt DateTime @updatedAt @map("last_active_at")
+
+  terminal Terminal @relation(fields: [terminalId], references: [id])
+
+  @@map("device_bindings")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  action    String
+  details   String
+  ipAddress String?  @map("ip_address")
+  timestamp DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+}
+
+model ReconciliationReport {
+  id                  String   @id @default(uuid())
+  startDate           DateTime @map("start_date")
+  endDate             DateTime @map("end_date")
+  terminalId          String?  @map("terminal_id")
+  totalDispatches     Int      @map("total_dispatches")
+  totalMunicipalComm  Decimal  @db.Decimal(12, 2) @map("total_municipal_comm")
+  totalPlatformComm   Decimal  @db.Decimal(12, 2) @map("total_platform_comm")
+  status              String   @default("PENDING")
+  generatedAt         DateTime @default(now()) @map("generated_at")
+
+  @@map("reconciliation_reports")
+}
