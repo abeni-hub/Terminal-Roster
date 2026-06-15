@@ -16,6 +16,31 @@ export interface LocalRoute {
   baseFareETB: number;
 }
 
+export interface LocalTerminal {
+  id: string;
+  name: string;
+  code: string;
+  location: string;
+}
+
+export interface LocalScheduleEntry {
+  id: string;
+  plateNumber: string;
+  ownerName: string;
+  vehicleStatus: string;
+  terminalName: string;
+  terminalCode: string;
+  routeCode: string;
+  origin: string;
+  destination: string;
+  baseFareETB: number;
+  weekNumber: number;
+  validFrom: string;   // ISO string
+  validUntil: string;  // ISO string
+  status: 'ACTIVE' | 'INACTIVE';
+  importedAt: string;
+}
+
 export interface LocalQueueEntry {
   id: string;
   terminalId: string;
@@ -36,7 +61,7 @@ export interface LocalDispatchRecord {
   dispatchTime: number;
   fareChargedETB: number;
   syncId: string;
-  isSynced: number; // 0 = False, 1 = True (Indexable flag)
+  isSynced: number; // 0 = False, 1 = True
 }
 
 export interface LocalViolation {
@@ -67,6 +92,8 @@ export interface LocalAuditLog {
 export class OfflineDatabase extends Dexie {
   vehicles!: Table<LocalVehicle>;
   routes!: Table<LocalRoute>;
+  terminals!: Table<LocalTerminal>;
+  schedules!: Table<LocalScheduleEntry>;
   queue!: Table<LocalQueueEntry>;
   dispatches!: Table<LocalDispatchRecord>;
   violations!: Table<LocalViolation>;
@@ -75,14 +102,16 @@ export class OfflineDatabase extends Dexie {
 
   constructor() {
     super('AATDRS_Terminal_DB');
-    this.version(1).stores({
-      vehicles: 'id, plateNumber, assignedRouteId',
-      routes: 'id, code',
-      queue: 'id, [terminalId+routeId], status, checkInTime',
-      dispatches: 'id, syncId, isSynced, dispatchTime',
-      violations: 'id, vehicleId, timestamp',
+    this.version(2).stores({
+      vehicles:  'id, plateNumber, assignedRouteId',
+      routes:    'id, code',
+      terminals: 'id, code, name',
+      schedules: 'id, weekNumber, terminalCode, status',
+      queue:     'id, [terminalId+routeId], status, checkInTime',
+      dispatches:'id, syncId, isSynced, dispatchTime',
+      violations:'id, vehicleId, timestamp',
       syncQueue: '++id, action, timestamp',
-      auditLogs: 'id, timestamp'
+      auditLogs: 'id, timestamp',
     });
   }
 }
