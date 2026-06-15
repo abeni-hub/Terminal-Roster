@@ -18,7 +18,7 @@ export default function HistoryPage() {
     return () => clearInterval(timer);
   }, [loadHistory]);
 
-  const totalRevenue = history.reduce((sum, item) => sum + item.fareChargedETB, 0);
+  const totalRevenue = history.reduce((sum, item) => sum + Number(item.fareChargedETB || 0), 0);
 
   return (
     <div className="space-y-8">
@@ -60,7 +60,7 @@ export default function HistoryPage() {
                     </td>
                     <td className="py-3.5 pr-4 text-slate-400">{item.dispatcherId}</td>
                     <td className="py-3.5 pr-4 text-slate-400">{new Date(item.dispatchTime).toLocaleString()}</td>
-                    <td className="py-3.5 pr-4 text-emerald-400 font-bold">{item.fareChargedETB.toFixed(2)} ETB</td>
+                    <td className="py-3.5 pr-4 text-emerald-400 font-bold">{Number(item.fareChargedETB).toFixed(2)} ETB</td>
                     <td className="py-3.5 text-right">
                       {item.isSynced === 1 ? (
                         <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">

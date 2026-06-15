@@ -218,7 +218,7 @@ async function main() {
 
   // ── 13. DEVICE BINDING ────────────────────────────────────────────────────
   await prisma.deviceBinding.create({
-    data: { terminalId: megenagna.id, deviceUuid: 'DEV-UUID-AAAA-1111', publicKey: 'ssh-rsa AAAA...dispatcher-tablet==', isApproved: true },
+    data: { terminalId: megenagna.id, deviceUuid: 'device-uuid-12345', publicKey: 'ssh-rsa AAAA...dispatcher-tablet==', isApproved: true },
   });
   console.log('  ✔ Device binding seeded (1).');
 

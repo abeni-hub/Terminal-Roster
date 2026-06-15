@@ -118,8 +118,8 @@ export default function ReportsPage() {
     }
   };
 
-  const totalComm = reports.reduce((sum, r) => sum + r.totalMunicipalComm, 0);
-  const totalPlatform = reports.reduce((sum, r) => sum + r.totalPlatformComm, 0);
+  const totalComm = reports.reduce((sum, r) => sum + Number(r.totalMunicipalComm || 0), 0);
+  const totalPlatform = reports.reduce((sum, r) => sum + Number(r.totalPlatformComm || 0), 0);
 
   return (
     <div className="space-y-8">
@@ -228,8 +228,8 @@ export default function ReportsPage() {
                         {new Date(r.startDate).toLocaleDateString()} - {new Date(r.endDate).toLocaleDateString()}
                       </td>
                       <td className="py-3.5 pr-4 font-mono text-slate-200 text-sm font-bold">{r.totalDispatches}</td>
-                      <td className="py-3.5 pr-4 font-mono text-indigo-400 font-bold">{r.totalMunicipalComm.toFixed(2)} ETB</td>
-                      <td className="py-3.5 pr-4 font-mono text-emerald-400 font-bold">{r.totalPlatformComm.toFixed(2)} ETB</td>
+                      <td className="py-3.5 pr-4 font-mono text-indigo-400 font-bold">{Number(r.totalMunicipalComm).toFixed(2)} ETB</td>
+                      <td className="py-3.5 pr-4 font-mono text-emerald-400 font-bold">{Number(r.totalPlatformComm).toFixed(2)} ETB</td>
                       <td className="py-3.5 pr-4">
                         <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                           r.status === 'APPROVED'

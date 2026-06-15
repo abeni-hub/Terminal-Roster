@@ -292,7 +292,7 @@ export default function RoutesPage() {
                       <td className="py-3.5 pr-4 text-slate-200">
                         {r.origin} <span className="text-slate-500 mx-1">→</span> {r.destination}
                       </td>
-                      <td className="py-3.5 pr-4 font-mono text-emerald-400 font-bold">{r.baseFareETB.toFixed(2)} ETB</td>
+                      <td className="py-3.5 pr-4 font-mono text-emerald-400 font-bold">{Number(r.baseFareETB).toFixed(2)} ETB</td>
                       <td className="py-3.5 text-right space-x-2">
                         <button
                           onClick={() => setAssignRouteId(r.id)}
