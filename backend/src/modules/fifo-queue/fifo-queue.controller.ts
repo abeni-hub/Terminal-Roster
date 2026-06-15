@@ -16,14 +16,14 @@ export class FifoQueueController {
   constructor(private readonly fifoQueueService: FifoQueueService) {}
 
   @Post('check-in')
-  @Roles(RoleName.SUPER_ADMIN, RoleName.DISPATCHER)
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.DISPATCHER)
   @ApiOperation({ summary: 'Check in a vehicle into the queue (Dispatcher only)' })
   async checkIn(@Body() dto: CheckInVehicleDto) {
     return this.fifoQueueService.checkIn(dto);
   }
 
   @Post('dispatch')
-  @Roles(RoleName.SUPER_ADMIN, RoleName.DISPATCHER)
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.DISPATCHER)
   @ApiOperation({ summary: 'Dispatch a vehicle (Dispatcher only)' })
   async dispatch(@Body() dto: DispatchVehicleDto, @CurrentUser() user: { id: string }) {
     return this.fifoQueueService.dispatch(dto, user.id);

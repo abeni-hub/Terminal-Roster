@@ -15,8 +15,8 @@ export class RoutesController {
   constructor(private readonly routesService: RoutesService) {}
 
   @Post()
-  @Roles(RoleName.SUPER_ADMIN, RoleName.TRANSPORT_OFFICE_ADMIN)
-  @ApiOperation({ summary: 'Create a new route (Admin only)' })
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
+  @ApiOperation({ summary: 'Create a new route (Admin/Planner only)' })
   async create(@Body() createRouteDto: CreateRouteDto) {
     return this.routesService.create(createRouteDto);
   }
@@ -34,14 +34,14 @@ export class RoutesController {
   }
 
   @Patch(':id')
-  @Roles(RoleName.SUPER_ADMIN, RoleName.TRANSPORT_OFFICE_ADMIN)
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
   @ApiOperation({ summary: 'Update route' })
   async update(@Param('id') id: string, @Body() updateRouteDto: UpdateRouteDto) {
     return this.routesService.update(id, updateRouteDto);
   }
 
   @Post(':id/assign')
-  @Roles(RoleName.SUPER_ADMIN, RoleName.TRANSPORT_OFFICE_ADMIN)
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
   @ApiOperation({ summary: 'Assign a route to a terminal' })
   async assignToTerminal(
     @Param('id') routeId: string,
@@ -51,8 +51,8 @@ export class RoutesController {
   }
 
   @Delete(':id')
-  @Roles(RoleName.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Delete route (Super Admin only)' })
+  @Roles(RoleName.SYSTEM_ADMIN)
+  @ApiOperation({ summary: 'Delete route (System Admin only)' })
   async remove(@Param('id') id: string) {
     return this.routesService.remove(id);
   }

@@ -15,7 +15,7 @@ export class VehiclesController {
   constructor(private readonly vehiclesService: VehiclesService) {}
 
   @Post()
-  @Roles(RoleName.SUPER_ADMIN, RoleName.TRANSPORT_OFFICE_ADMIN, RoleName.TERMINAL_ADMIN)
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
   @ApiOperation({ summary: 'Register a vehicle' })
   async create(@Body() createVehicleDto: CreateVehicleDto) {
     return this.vehiclesService.create(createVehicleDto);
@@ -40,15 +40,15 @@ export class VehiclesController {
   }
 
   @Patch(':id')
-  @Roles(RoleName.SUPER_ADMIN, RoleName.TRANSPORT_OFFICE_ADMIN, RoleName.TERMINAL_ADMIN)
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
   @ApiOperation({ summary: 'Update vehicle record' })
   async update(@Param('id') id: string, @Body() updateVehicleDto: UpdateVehicleDto) {
     return this.vehiclesService.update(id, updateVehicleDto);
   }
 
   @Delete(':id')
-  @Roles(RoleName.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Delete vehicle (Super Admin only)' })
+  @Roles(RoleName.SYSTEM_ADMIN)
+  @ApiOperation({ summary: 'Delete vehicle (System Admin only)' })
   async remove(@Param('id') id: string) {
     return this.vehiclesService.remove(id);
   }

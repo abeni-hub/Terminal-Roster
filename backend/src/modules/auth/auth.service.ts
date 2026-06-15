@@ -53,7 +53,7 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({
       where: { username },
     });
-    if (!user || user.roleName !== RoleName.SUPERVISOR || !user.pinHash) {
+    if (!user || (user.roleName !== RoleName.SYSTEM_ADMIN && user.roleName !== RoleName.MUNICIPAL_PLANNER) || !user.pinHash) {
       return false;
     }
     return bcrypt.compare(pin, user.pinHash);

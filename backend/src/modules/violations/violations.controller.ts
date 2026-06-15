@@ -14,15 +14,15 @@ export class ViolationsController {
   constructor(private readonly violationsService: ViolationsService) {}
 
   @Get()
-  @Roles(RoleName.SUPER_ADMIN, RoleName.TRANSPORT_OFFICE_ADMIN, RoleName.SUPERVISOR, RoleName.AUDITOR)
-  @ApiOperation({ summary: 'Get all recorded terminal violations (Admin/Supervisor/Auditor only)' })
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
+  @ApiOperation({ summary: 'Get all recorded terminal violations (Admin/Planner only)' })
   async findAll() {
     return this.violationsService.findAll();
   }
 
   @Post(':id/resolve')
-  @Roles(RoleName.SUPER_ADMIN, RoleName.SUPERVISOR)
-  @ApiOperation({ summary: 'Resolve a vehicle violation (Admin/Supervisor only)' })
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
+  @ApiOperation({ summary: 'Resolve a vehicle violation (Admin/Planner only)' })
   async resolve(@Param('id') id: string) {
     return this.violationsService.resolve(id);
   }

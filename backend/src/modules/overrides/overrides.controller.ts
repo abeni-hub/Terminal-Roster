@@ -15,15 +15,15 @@ export class OverridesController {
   constructor(private readonly overridesService: OverridesService) {}
 
   @Post()
-  @Roles(RoleName.SUPER_ADMIN, RoleName.SUPERVISOR)
-  @ApiOperation({ summary: 'Submit a supervisor queue override bypass (Supervisor only)' })
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
+  @ApiOperation({ summary: 'Submit a supervisor queue override bypass (Admin/Planner only)' })
   async createOverride(@Body() dto: CreateOverrideDto) {
     return this.overridesService.createOverride(dto);
   }
 
   @Get()
-  @Roles(RoleName.SUPER_ADMIN, RoleName.AUDITOR, RoleName.FINANCE_OFFICER)
-  @ApiOperation({ summary: 'List all override audit trails (Auditors / Admins only)' })
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
+  @ApiOperation({ summary: 'List all override audit trails (Admin/Planner only)' })
   async getOverrideLogs() {
     return this.overridesService.getOverrideLogs();
   }

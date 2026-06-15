@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "RoleName" AS ENUM ('SUPER_ADMIN', 'TRANSPORT_OFFICE_ADMIN', 'TERMINAL_ADMIN', 'SUPERVISOR', 'DISPATCHER', 'AUDITOR', 'FINANCE_OFFICER', 'SYSTEM_SUPPORT');
+CREATE TYPE "RoleName" AS ENUM ('SYSTEM_ADMIN', 'MUNICIPAL_PLANNER', 'DISPATCHER');
 
 -- CreateEnum
 CREATE TYPE "VehicleStatus" AS ENUM ('ACTIVE', 'SUSPENDED', 'MAINTENANCE', 'INACTIVE');
@@ -12,6 +12,9 @@ CREATE TYPE "OverrideType" AS ENUM ('VEHICLE_SKIP', 'FORCE_DISPATCH', 'ROUTE_TEM
 
 -- CreateEnum
 CREATE TYPE "ViolationType" AS ENUM ('ROUTE_HOPPING', 'UNAUTHORIZED_TERMINAL', 'DUPLICATE_CHECKIN', 'SUSPICIOUS_INTERVAL');
+
+-- CreateEnum
+CREATE TYPE "AssignmentStatus" AS ENUM ('ACTIVE', 'INACTIVE');
 
 -- CreateTable
 CREATE TABLE "users" (
@@ -87,6 +90,21 @@ CREATE TABLE "vehicles" (
     "updated_at" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "vehicles_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "vehicle_schedules" (
+    "id" TEXT NOT NULL,
+    "vehicle_id" TEXT NOT NULL,
+    "terminal_id" TEXT NOT NULL,
+    "route_id" TEXT NOT NULL,
+    "week_number" INTEGER NOT NULL,
+    "valid_from" TIMESTAMP(3) NOT NULL,
+    "valid_until" TIMESTAMP(3) NOT NULL,
+    "status" "AssignmentStatus" NOT NULL DEFAULT 'ACTIVE',
+    "imported_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "vehicle_schedules_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -198,6 +216,18 @@ CREATE TABLE "reconciliation_reports" (
     CONSTRAINT "reconciliation_reports_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "settings" (
+    "id" TEXT NOT NULL,
+    "key" TEXT NOT NULL,
+    "value" TEXT NOT NULL,
+    "description" TEXT,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+    "updated_by" TEXT,
+
+    CONSTRAINT "settings_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "users_username_key" ON "users"("username");
 
@@ -221,6 +251,12 @@ CREATE UNIQUE INDEX "terminal_routes_terminal_id_route_id_key" ON "terminal_rout
 
 -- CreateIndex
 CREATE UNIQUE INDEX "vehicles_plate_number_key" ON "vehicles"("plate_number");
+
+-- CreateIndex
+CREATE INDEX "vehicle_schedules_terminal_id_week_number_status_idx" ON "vehicle_schedules"("terminal_id", "week_number", "status");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "vehicle_schedules_vehicle_id_week_number_key" ON "vehicle_schedules"("vehicle_id", "week_number");
 
 -- CreateIndex
 CREATE INDEX "vehicle_route_assignments_vehicle_id_route_id_idx" ON "vehicle_route_assignments"("vehicle_id", "route_id");
@@ -252,6 +288,9 @@ CREATE INDEX "violation_records_vehicle_id_violation_type_timestamp_idx" ON "vio
 -- CreateIndex
 CREATE UNIQUE INDEX "device_bindings_device_uuid_key" ON "device_bindings"("device_uuid");
 
+-- CreateIndex
+CREATE UNIQUE INDEX "settings_key_key" ON "settings"("key");
+
 -- AddForeignKey
 ALTER TABLE "user_terminal_assignments" ADD CONSTRAINT "user_terminal_assignments_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -263,6 +302,15 @@ ALTER TABLE "terminal_routes" ADD CONSTRAINT "terminal_routes_terminal_id_fkey" 
 
 -- AddForeignKey
 ALTER TABLE "terminal_routes" ADD CONSTRAINT "terminal_routes_route_id_fkey" FOREIGN KEY ("route_id") REFERENCES "routes"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "vehicle_schedules" ADD CONSTRAINT "vehicle_schedules_vehicle_id_fkey" FOREIGN KEY ("vehicle_id") REFERENCES "vehicles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "vehicle_schedules" ADD CONSTRAINT "vehicle_schedules_terminal_id_fkey" FOREIGN KEY ("terminal_id") REFERENCES "terminals"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "vehicle_schedules" ADD CONSTRAINT "vehicle_schedules_route_id_fkey" FOREIGN KEY ("route_id") REFERENCES "routes"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "vehicle_route_assignments" ADD CONSTRAINT "vehicle_route_assignments_vehicle_id_fkey" FOREIGN KEY ("vehicle_id") REFERENCES "vehicles"("id") ON DELETE CASCADE ON UPDATE CASCADE;

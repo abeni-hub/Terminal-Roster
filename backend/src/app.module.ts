@@ -12,6 +12,7 @@ import { ViolationsModule } from './modules/violations/violations.module';
 import { OverridesModule } from './modules/overrides/overrides.module';
 import { SyncModule } from './modules/sync/sync.module';
 import { ReconciliationModule } from './modules/reconciliation/reconciliation.module';
+import { AdminModule } from './modules/admin/admin.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ReconciliationModule } from './modules/reconciliation/reconciliation.mo
     OverridesModule,
     SyncModule,
     ReconciliationModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],

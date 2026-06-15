@@ -15,8 +15,8 @@ export class TerminalsController {
   constructor(private readonly terminalsService: TerminalsService) {}
 
   @Post()
-  @Roles(RoleName.SUPER_ADMIN, RoleName.TRANSPORT_OFFICE_ADMIN)
-  @ApiOperation({ summary: 'Create a new terminal (Admin only)' })
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
+  @ApiOperation({ summary: 'Create a new terminal (Admin/Planner only)' })
   async create(@Body() createTerminalDto: CreateTerminalDto) {
     return this.terminalsService.create(createTerminalDto);
   }
@@ -34,15 +34,15 @@ export class TerminalsController {
   }
 
   @Patch(':id')
-  @Roles(RoleName.SUPER_ADMIN, RoleName.TRANSPORT_OFFICE_ADMIN)
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
   @ApiOperation({ summary: 'Update terminal settings' })
   async update(@Param('id') id: string, @Body() updateTerminalDto: UpdateTerminalDto) {
     return this.terminalsService.update(id, updateTerminalDto);
   }
 
   @Delete(':id')
-  @Roles(RoleName.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Remove terminal (Super Admin only)' })
+  @Roles(RoleName.SYSTEM_ADMIN)
+  @ApiOperation({ summary: 'Remove terminal (System Admin only)' })
   async remove(@Param('id') id: string) {
     return this.terminalsService.remove(id);
   }

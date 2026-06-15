@@ -33,7 +33,7 @@ export class RosterController {
 
   // ── POST /roster/upload  (Transport Office & Super Admin only) ──────────────
   @Post('upload')
-  @Roles(RoleName.SUPER_ADMIN, RoleName.TRANSPORT_OFFICE_ADMIN)
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
   @ApiOperation({
     summary:
       'Upload weekly vehicle schedule CSV from Transport Office. ' +
@@ -51,14 +51,9 @@ export class RosterController {
   // ── GET /roster/schedules  (all authenticated roles) ───────────────────────
   @Get('schedules')
   @Roles(
-    RoleName.SUPER_ADMIN,
-    RoleName.TRANSPORT_OFFICE_ADMIN,
-    RoleName.TERMINAL_ADMIN,
-    RoleName.SUPERVISOR,
+    RoleName.SYSTEM_ADMIN,
+    RoleName.MUNICIPAL_PLANNER,
     RoleName.DISPATCHER,
-    RoleName.AUDITOR,
-    RoleName.FINANCE_OFFICER,
-    RoleName.SYSTEM_SUPPORT,
   )
   @ApiOperation({ summary: 'Get weekly vehicle schedules, filterable by terminal code and week number' })
   @ApiQuery({ name: 'terminalCode', required: false, description: 'Terminal code, e.g. MEG-01' })
@@ -74,14 +69,9 @@ export class RosterController {
   // ── GET /roster/terminals  (all authenticated roles — feeds the dropdown) ───
   @Get('terminals')
   @Roles(
-    RoleName.SUPER_ADMIN,
-    RoleName.TRANSPORT_OFFICE_ADMIN,
-    RoleName.TERMINAL_ADMIN,
-    RoleName.SUPERVISOR,
+    RoleName.SYSTEM_ADMIN,
+    RoleName.MUNICIPAL_PLANNER,
     RoleName.DISPATCHER,
-    RoleName.AUDITOR,
-    RoleName.FINANCE_OFFICER,
-    RoleName.SYSTEM_SUPPORT,
   )
   @ApiOperation({ summary: 'List all active terminals (used to populate terminal selector)' })
   async getTerminals() {

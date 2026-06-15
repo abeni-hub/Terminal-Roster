@@ -20,22 +20,22 @@ export class ReconciliationController {
   constructor(private readonly reconciliationService: ReconciliationService) {}
 
   @Post('generate')
-  @Roles(RoleName.SUPER_ADMIN, RoleName.FINANCE_OFFICER)
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
   @ApiOperation({ summary: 'Generate municipal/platform commission reconciliation report' })
   async generate(@Body() dto: GenerateReportDto) {
     return this.reconciliationService.generateReport(dto.startDate, dto.endDate, dto.terminalId);
   }
 
   @Get('reports')
-  @Roles(RoleName.SUPER_ADMIN, RoleName.FINANCE_OFFICER, RoleName.AUDITOR)
-  @ApiOperation({ summary: 'Get all generated reports (Finance / Auditor only)' })
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
+  @ApiOperation({ summary: 'Get all generated reports (Admin/Planner only)' })
   async getReports() {
     return this.reconciliationService.getReports();
   }
 
   @Post(':id/settle')
-  @Roles(RoleName.SUPER_ADMIN, RoleName.FINANCE_OFFICER)
-  @ApiOperation({ summary: 'Settle outstanding commissions (Finance only)' })
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
+  @ApiOperation({ summary: 'Settle outstanding commissions' })
   async settle(@Param('id') id: string) {
     return this.reconciliationService.settleReport(id);
   }

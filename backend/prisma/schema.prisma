@@ -7,14 +7,9 @@ generator client {
 }
 
 enum RoleName {
-  SUPER_ADMIN
-  TRANSPORT_OFFICE_ADMIN
-  TERMINAL_ADMIN
-  SUPERVISOR
+  SYSTEM_ADMIN
+  MUNICIPAL_PLANNER
   DISPATCHER
-  AUDITOR
-  FINANCE_OFFICER
-  SYSTEM_SUPPORT
 }
 
 enum VehicleStatus {
@@ -308,3 +303,15 @@ model ReconciliationReport {
 
   @@map("reconciliation_reports")
 }
+
+model Settings {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  description String?
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  updatedBy   String?  @map("updated_by")
+
+  @@map("settings")
+}
+
