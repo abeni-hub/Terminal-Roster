@@ -21,14 +21,14 @@ export class VehiclesService {
 
   async findAll() {
     return this.prisma.vehicle.findMany({
-      include: { routeAssignments: { include: { route: true } } },
+      include: { rosterVehicleAssignments: { include: { route: true } } },
     });
   }
 
   async findOne(id: string) {
     const vehicle = await this.prisma.vehicle.findUnique({
       where: { id },
-      include: { routeAssignments: { include: { route: true } } },
+      include: { rosterVehicleAssignments: { include: { route: true } } },
     });
     if (!vehicle) {
       throw new NotFoundException(`Vehicle with ID ${id} not found`);
@@ -39,7 +39,7 @@ export class VehiclesService {
   async findByPlate(plateNumber: string) {
     const vehicle = await this.prisma.vehicle.findUnique({
       where: { plateNumber },
-      include: { routeAssignments: { include: { route: true } } },
+      include: { rosterVehicleAssignments: { include: { route: true } } },
     });
     if (!vehicle) {
       throw new NotFoundException(`Vehicle with plate number ${plateNumber} not found`);

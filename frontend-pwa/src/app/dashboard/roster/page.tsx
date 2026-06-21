@@ -91,14 +91,25 @@ export default function RosterPage() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ csvData }),
       });
-      const data = await res.json();
-      setUploadResult(data);
+      
+      let data;
+      const text = await res.text();
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { processed: 0, errors: [`Server returned non-JSON response: ${text.slice(0, 100)}...`] };
+      }
+
       if (res.ok) {
+        setUploadResult(data);
         setCsvData('');
         fetchSchedules();
+      } else {
+        const errors = data.errors || data.message?.errors || (typeof data.message === 'string' ? [data.message] : ['Upload failed']);
+        setUploadResult({ processed: 0, errors });
       }
-    } catch {
-      setUploadResult({ processed: 0, errors: ['Upload failed – network error'] });
+    } catch (e: any) {
+      setUploadResult({ processed: 0, errors: [`Upload failed: ${e.message || 'network error'}`] });
     } finally {
       setUploading(false);
     }

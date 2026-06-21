@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, HttpException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { FifoQueueService } from '../fifo-queue/fifo-queue.service';
 import { OverridesService } from '../overrides/overrides.service';
@@ -13,7 +13,7 @@ export class SyncService {
     private overridesService: OverridesService,
   ) {}
 
-  async processBatchSync(dto: BatchSyncDto) {
+  async processBatchSync(dto: BatchSyncDto, userId?: string, userRole?: string) {
     // 1. Verify device binding and approval status
     const binding = await this.prisma.deviceBinding.findUnique({
       where: { deviceUuid: dto.deviceUuid },
@@ -29,6 +29,7 @@ export class SyncService {
 
     const succeeded: string[] = [];
     const failed: { syncId: string; error: string }[] = [];
+    const rejected: { syncId: string; error: string }[] = [];
 
     // 2. Process each action sequentially
     for (const item of dto.actions) {
@@ -42,7 +43,7 @@ export class SyncService {
                 routeId,
                 terminalId,
                 syncId: item.syncId,
-              });
+              }, userId, userRole);
               break;
             }
             case 'DISPATCH': {
@@ -52,7 +53,7 @@ export class SyncService {
                 terminalId,
                 vehicleId,
                 syncId: item.syncId,
-              }, dispatcherId);
+              }, dispatcherId || userId, userRole);
               break;
             }
             case 'OVERRIDE': {
@@ -86,10 +87,27 @@ export class SyncService {
 
         succeeded.push(item.syncId);
       } catch (err: any) {
-        failed.push({
-          syncId: item.syncId,
-          error: err.message || 'Unknown database error occurred during sync processing',
-        });
+        // Special case: ConflictException because vehicle is already checked in and pending dispatch
+        // represents that the vehicle is already in the desired state. Consider it succeeded.
+        const isAlreadyCheckedIn = 
+          (err.status === 409 || err.constructor?.name === 'ConflictException' || err instanceof ConflictException) && 
+          err.message?.includes('already checked in');
+
+        if (isAlreadyCheckedIn) {
+          succeeded.push(item.syncId);
+        } else if (err instanceof HttpException || err.status !== undefined || err.constructor?.name?.endsWith('Exception')) {
+          // Permanent business/validation constraint rejection
+          rejected.push({
+            syncId: item.syncId,
+            error: err.message || 'Action permanently rejected by business logic constraints',
+          });
+        } else {
+          // Transient database/network or other server exception
+          failed.push({
+            syncId: item.syncId,
+            error: err.message || 'Unknown database error occurred during sync processing',
+          });
+        }
       }
     }
 
@@ -102,6 +120,7 @@ export class SyncService {
     return {
       succeeded,
       failed,
+      rejected,
     };
   }
 }

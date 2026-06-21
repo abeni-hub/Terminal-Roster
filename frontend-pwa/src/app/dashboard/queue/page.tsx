@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { db, LocalQueueEntry } from '../../../db/schema';
 import { SyncEngine } from '../../../db/syncEngine';
 
@@ -17,6 +17,11 @@ export default function QueuePage() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [pendingQueue, setPendingQueue] = useState<LocalQueueEntry[]>([]);
   const [isOnline, setIsOnline] = useState(true);
+  // Dispatcher roster assignment
+  const [assignedRouteCode, setAssignedRouteCode] = useState<string | null>(null);
+  const [assignedTerminalName, setAssignedTerminalName] = useState<string | null>(null);
+  const [assignedRouteName, setAssignedRouteName] = useState<string | null>(null);
+  const [assignedTerminalId, setAssignedTerminalId] = useState<string | null>(null);
 
   // Override Modal state
   const [showOverrideModal, setShowOverrideModal] = useState(false);
@@ -26,38 +31,200 @@ export default function QueuePage() {
   const [overrideReason, setOverrideReason] = useState('Driver absent / route-hop manual skip');
   const [modalError, setModalError] = useState('');
   const [submittingOverride, setSubmittingOverride] = useState(false);
+  const routeCodeRef = useRef<string | null>(null);
+  const terminalIdRef = useRef<string | null>(null);
+  const initializedRef = useRef(false);
 
-  const loadLocalData = useCallback(async () => {
-    const list = await db.queue.where('status').equals('PENDING').toArray();
+  const loadLocalData = useCallback(async (routeFilter?: string, terminalIdOverride?: string) => {
+    const token = localStorage.getItem('aatdrs_token');
+    const effectiveTerminalId = terminalIdOverride ?? terminalIdRef.current ?? assignedTerminalId;
+    const storedUser = localStorage.getItem('aatdrs_user');
+    const parsedUser = storedUser ? JSON.parse(storedUser) : null;
+    const isDispatcher = parsedUser?.roleName === 'DISPATCHER';
+
+    if (navigator.onLine && token && isDispatcher && effectiveTerminalId && routeFilter) {
+      try {
+        const res = await fetch(`${API_URL}/queue/live/${effectiveTerminalId}/${routeFilter}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const rawLive = await res.json();
+          const serverEntries = rawLive.map((item: any) => ({
+            id: item.id,
+            terminalId: item.terminalId,
+            routeId: item.routeId,
+            vehicleId: item.vehicle.plateNumber,
+            checkInTime: new Date(item.checkInTime).getTime(),
+            status: 'PENDING',
+            sequence: item.sequence,
+            syncId: item.syncId || '',
+          }));
+
+          // Fetch unsynced local check-ins from outbox
+          const outbox = await db.syncQueue.where('action').equals('CHECKIN').toArray();
+          const unsyncedEntries = outbox.map((action: any) => ({
+            id: action.payload.syncId,
+            terminalId: action.payload.terminalId,
+            routeId: action.payload.routeId,
+            vehicleId: action.payload.plateNumber,
+            checkInTime: action.timestamp,
+            status: 'PENDING',
+            sequence: 999,
+            syncId: action.payload.syncId,
+          }));
+
+          const combined = [...serverEntries];
+          for (const unsynced of unsyncedEntries) {
+            if (!combined.some(x => x.syncId === unsynced.syncId)) {
+              combined.push(unsynced);
+            }
+          }
+
+          // Clear local queue entries of this terminal/route and put the combined list
+          const localToKeep = await db.queue.toArray();
+          const filteredKeep = localToKeep.filter(q => q.terminalId !== effectiveTerminalId || q.routeId !== routeFilter);
+          
+          await db.queue.clear();
+          await db.queue.bulkPut([...filteredKeep, ...combined]);
+        }
+      } catch (err) {
+        console.error('Failed to fetch live queue from server:', err);
+      }
+    }
+
+    let list = await db.queue.where('status').equals('PENDING').toArray();
+    if (routeFilter) {
+      list = list.filter((e) => e.routeId === routeFilter);
+    }
     list.sort((a, b) => a.checkInTime - b.checkInTime || a.sequence - b.sequence);
     setPendingQueue(list);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignedTerminalId]);
+
+
+  const fetchRosterAssignment = useCallback(async (userObj: AuthUser): Promise<{ routeId: string | null; terminalId: string | null }> => {
+    if (userObj.roleName !== 'DISPATCHER') return { routeId: null, terminalId: null };
+    const token = localStorage.getItem('aatdrs_token');
+    try {
+      const [schedRes, termRes] = await Promise.all([
+        fetch(`${API_URL}/roster/schedules`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_URL}/roster/terminals`, { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      let routeCode: string | null = null;
+      let routeId: string | null = null;
+      let termId: string | null = null;
+      let termName: string | null = null;
+      let routeName: string | null = null;
+
+      if (schedRes.ok) {
+        const schedules = await schedRes.json();
+        if (schedules.length > 0) {
+          const s = schedules[0];
+          routeCode = s.route.code;
+          routeId = s.route.id;
+          routeName = `${s.route.origin} → ${s.route.destination}`;
+        }
+      }
+      if (termRes.ok) {
+        const terminals = await termRes.json();
+        if (terminals.length > 0) {
+          termName = terminals[0].name;
+          termId = terminals[0].id;
+        }
+      }
+
+      if (routeCode) {
+        setAssignedRouteCode(routeCode);
+        setAssignedRouteName(routeName);
+      }
+      if (termName) {
+        setAssignedTerminalName(termName);
+        setAssignedTerminalId(termId);
+      }
+      return { routeId, terminalId: termId };
+    } catch {
+      // Offline fallback: load from IndexedDB
+      const cachedSchedules = await db.schedules.toArray();
+      const cachedTerminals = await db.terminals.toArray();
+      let routeCode: string | null = null;
+      let routeId: string | null = null;
+      let termId: string | null = null;
+      let termName: string | null = null;
+      let routeName: string | null = null;
+
+      if (cachedSchedules.length > 0) {
+        const s = cachedSchedules[0];
+        routeCode = s.routeCode;
+        routeId = s.routeId || null;
+        routeName = `${s.origin} → ${s.destination}`;
+      }
+      if (cachedTerminals.length > 0) {
+        termName = cachedTerminals[0].name;
+        termId = cachedTerminals[0].id;
+      }
+
+      if (routeCode) {
+        setAssignedRouteCode(routeCode);
+        setAssignedRouteName(routeName);
+      }
+      if (termName) {
+        setAssignedTerminalName(termName);
+        setAssignedTerminalId(termId);
+      }
+      return { routeId, terminalId: termId };
+    }
   }, []);
 
   useEffect(() => {
+    // Guard against double-initialization (React StrictMode double-mount)
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+
     const stored = localStorage.getItem('aatdrs_user');
+    let parsedUser: AuthUser | null = null;
     if (stored) {
-      setUser(JSON.parse(stored));
+      parsedUser = JSON.parse(stored);
+      setUser(parsedUser);
     }
-    loadLocalData();
+
+    const init = async () => {
+      if (parsedUser?.roleName === 'DISPATCHER') {
+        const { routeId, terminalId } = await fetchRosterAssignment(parsedUser);
+        routeCodeRef.current = routeId;
+        terminalIdRef.current = terminalId;
+        loadLocalData(routeId ?? undefined, terminalId ?? undefined);
+      } else {
+        loadLocalData();
+      }
+    };
+
+    init();
     setIsOnline(navigator.onLine);
 
     const updateOnline = () => setIsOnline(navigator.onLine);
     window.addEventListener('online', updateOnline);
     window.addEventListener('offline', updateOnline);
 
-    const timer = setInterval(loadLocalData, 2000);
+    const timer = setInterval(() => {
+      loadLocalData(routeCodeRef.current ?? undefined);
+    }, 3000);
+
     return () => {
       window.removeEventListener('online', updateOnline);
       window.removeEventListener('offline', updateOnline);
       clearInterval(timer);
+      initializedRef.current = false;
     };
-  }, [loadLocalData]);
+  // Only run on mount — dependencies are stable callbacks
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const triggerSync = async () => {
     const token = localStorage.getItem('aatdrs_token');
     if (token) {
       await SyncEngine.triggerSync('device-uuid-12345', API_URL, token);
-      loadLocalData();
+      const isDispatcher = user?.roleName === 'DISPATCHER';
+      loadLocalData(isDispatcher ? routeCodeRef.current ?? undefined : undefined);
     }
   };
 
@@ -65,11 +232,21 @@ export default function QueuePage() {
     const syncId = crypto.randomUUID();
     const now = Date.now();
 
+    let effectiveTerminalId = terminalIdRef.current ?? assignedTerminalId ?? '';
+    if (!effectiveTerminalId) {
+      if (user?.roleName === 'DISPATCHER') {
+        const cachedTerminals = await db.terminals.toArray();
+        if (cachedTerminals.length > 0) {
+          effectiveTerminalId = cachedTerminals[0].id;
+        }
+      }
+    }
+
     // Mark as dispatched locally
     await db.queue.update(entryId, { status: 'DISPATCHED' });
     await db.dispatches.add({
       id: crypto.randomUUID(),
-      terminalId: 'MEG-01',
+      terminalId: effectiveTerminalId,
       routeId,
       vehicleId,
       dispatcherId: user?.username || 'system',
@@ -82,12 +259,13 @@ export default function QueuePage() {
     // Queue sync action
     await db.syncQueue.add({
       action: 'DISPATCH',
-      payload: { routeId, vehicleId, syncId },
+      payload: { routeId, vehicleId, terminalId: effectiveTerminalId, syncId },
       timestamp: now,
       retryCount: 0,
     });
 
-    loadLocalData();
+    const isDispatcher = user?.roleName === 'DISPATCHER';
+    loadLocalData(isDispatcher ? routeCodeRef.current ?? undefined : undefined);
     if (navigator.onLine) triggerSync();
   };
 
@@ -148,7 +326,8 @@ export default function QueuePage() {
 
       // Skip the vehicle in our local DB
       await db.queue.update(selectedEntry.id, { status: 'SKIPPED' });
-      loadLocalData();
+      const isDispatcher = user?.roleName === 'DISPATCHER';
+      loadLocalData(isDispatcher ? routeCodeRef.current ?? undefined : undefined);
       setShowOverrideModal(false);
     } catch (err: any) {
       setModalError(err.message || 'Validation failed. Check credentials and retry.');
@@ -168,6 +347,23 @@ export default function QueuePage() {
           <p className="text-xs text-slate-500">Addis Ababa taxi digital dispatch board. FIFO constraints are automatically enforced.</p>
         </div>
       </div>
+
+      {user?.roleName === 'DISPATCHER' && (
+        <div className="flex flex-wrap items-center gap-4 bg-slate-900/60 border border-teal-500/20 rounded-xl p-4 text-xs backdrop-blur-md">
+          <div className="flex items-center gap-2">
+            <span className="bg-teal-500/10 text-teal-400 border border-teal-500/20 px-2.5 py-1 rounded-lg font-semibold tracking-wide flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
+              📍 {assignedTerminalName || 'Loading Terminal...'}
+            </span>
+            <span className="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-lg font-mono font-bold tracking-wide flex items-center gap-1.5">
+              🛣️ {assignedRouteName || 'Loading Route...'} ({assignedRouteCode || '...'})
+            </span>
+          </div>
+          <div className="text-slate-400 text-xs flex-1 text-right italic font-medium">
+            Authorized Route Roster View — Showing only assigned vehicles.
+          </div>
+        </div>
+      )}
 
       <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-md">
         {pendingQueue.length === 0 ? (

@@ -1,6 +1,5 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
-import { AssignmentStatus } from '@prisma/client';
 
 // Government CSV format (tab or comma separated):
 //  plate_number | assigned_terminal | assigned_route | week_number | valid_from | valid_until | status
@@ -13,8 +12,11 @@ export class RosterService {
   async uploadRosterCsv(
     csvContent: string,
   ): Promise<{ processed: number; errors: string[] }> {
+    // Strip UTF-8 Byte Order Mark (BOM) if present
+    const cleanCsv = csvContent.replace(/^\uFEFF/, '').trim();
+
     // Normalise: accept tab OR comma separated; collapse Windows line-endings
-    const lines = csvContent
+    const lines = cleanCsv
       .replace(/\r\n/g, '\n')
       .replace(/\r/g, '\n')
       .split('\n');
@@ -66,39 +68,52 @@ export class RosterService {
 
       const resolvedVehicle = vehicle ?? (await this.prisma.vehicle.findUnique({ where: { plateNumber } }))!;
 
-      // ── Resolve Terminal (by name, partial match) ────────────────────────────
+      // ── Resolve Terminal (by name contains OR code equals, case-insensitive) ──
       const terminal = await this.prisma.terminal.findFirst({
-        where: { name: { contains: assignedTerminal, mode: 'insensitive' } },
+        where: {
+          OR: [
+            { name: { contains: assignedTerminal, mode: 'insensitive' } },
+            { code: { equals: assignedTerminal, mode: 'insensitive' } },
+          ],
+        },
       });
       if (!terminal) {
         errors.push(`Row ${i + 1}: Terminal "${assignedTerminal}" not found. Create it first.`);
         continue;
       }
 
-      // ── Resolve Route (by destination name, preferring terminal-linked routes) ─
+      // ── Resolve Route (by destination contains OR code equals, preferring terminal-linked routes) ─
       const routeViaTerminal = await this.prisma.route.findFirst({
         where: {
-          destination: { contains: assignedRoute, mode: 'insensitive' },
+          OR: [
+            { destination: { contains: assignedRoute, mode: 'insensitive' } },
+            { code: { equals: assignedRoute, mode: 'insensitive' } },
+          ],
           terminals: { some: { terminalId: terminal.id } },
         },
       });
 
-      // Fallback: find any route with matching destination
+      // Fallback: find any route with matching destination/code
       const routeFallback = routeViaTerminal ?? await this.prisma.route.findFirst({
-        where: { destination: { contains: assignedRoute, mode: 'insensitive' } },
+        where: {
+          OR: [
+            { destination: { contains: assignedRoute, mode: 'insensitive' } },
+            { code: { equals: assignedRoute, mode: 'insensitive' } },
+          ],
+        },
       });
 
       if (!routeFallback) {
         errors.push(
-          `Row ${i + 1}: Route with destination "${assignedRoute}" not found. Create it first.`,
+          `Row ${i + 1}: Route "${assignedRoute}" not found. Create it first.`,
         );
         continue;
       }
 
-      // ── Parse dates (DD/MM/YYYY or YYYY-MM-DD) ────────────────────────────────
+      // ── Parse dates (DD/MM/YYYY or DD-MM-YYYY or YYYY-MM-DD) ─────────────────
       const parseDate = (s: string): Date | null => {
-        // DD/MM/YYYY
-        const dmyMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        // DD/MM/YYYY or DD-MM-YYYY
+        const dmyMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
         if (dmyMatch) {
           return new Date(`${dmyMatch[3]}-${dmyMatch[2].padStart(2, '0')}-${dmyMatch[1].padStart(2, '0')}T00:00:00Z`);
         }
@@ -125,27 +140,47 @@ export class RosterService {
         continue;
       }
 
-      const status: AssignmentStatus =
-        statusStr.toUpperCase() === 'ACTIVE' ? AssignmentStatus.ACTIVE : AssignmentStatus.INACTIVE;
+      // ── Upsert Roster for the week ──────────────────────────────────────────
+      let roster = await this.prisma.roster.findFirst({
+        where: { weekNumber },
+      });
 
-      // ── Upsert schedule row ───────────────────────────────────────────────────
-      await this.prisma.vehicleSchedule.upsert({
-        where:  { vehicleId_weekNumber: { vehicleId: resolvedVehicle.id, weekNumber } },
+      if (!roster) {
+        roster = await this.prisma.roster.create({
+          data: {
+            name: `Week ${weekNumber} – ${validFrom.toLocaleDateString()} to ${validUntil.toLocaleDateString()}`,
+            weekNumber,
+            startDate: validFrom,
+            endDate: validUntil,
+            isActive: statusStr.toUpperCase() === 'ACTIVE',
+          },
+        });
+      } else {
+        roster = await this.prisma.roster.update({
+          where: { id: roster.id },
+          data: {
+            startDate: validFrom,
+            endDate: validUntil,
+            isActive: statusStr.toUpperCase() === 'ACTIVE' ? true : roster.isActive,
+          },
+        });
+      }
+
+      // ── Upsert RosterVehicleAssignment ──────────────────────────────────────
+      await this.prisma.rosterVehicleAssignment.upsert({
+        where: {
+          rosterId_vehicleId: {
+            rosterId: roster.id,
+            vehicleId: resolvedVehicle.id,
+          },
+        },
         create: {
-          vehicleId:  resolvedVehicle.id,
-          terminalId: terminal.id,
-          routeId:    routeFallback.id,
-          weekNumber,
-          validFrom,
-          validUntil,
-          status,
+          rosterId: roster.id,
+          vehicleId: resolvedVehicle.id,
+          routeId: routeFallback.id,
         },
         update: {
-          terminalId: terminal.id,
-          routeId:    routeFallback.id,
-          validFrom,
-          validUntil,
-          status,
+          routeId: routeFallback.id,
         },
       });
 
@@ -163,42 +198,208 @@ export class RosterService {
   }
 
   // ── Get weekly schedules (optionally filtered by terminal code and/or week) ──
-  async getSchedules(params: { terminalCode?: string; weekNumber?: number }) {
-    const { terminalCode, weekNumber } = params;
+  async getSchedules(params: {
+    terminalCode?: string;
+    weekNumber?: number;
+    userId?: string;
+    userRole?: string;
+  }) {
+    const { terminalCode, weekNumber, userId, userRole } = params;
 
     const where: Record<string, any> = {};
 
-    if (terminalCode) {
-      const terminal = await this.prisma.terminal.findUnique({
-        where: { code: terminalCode },
+    if (userRole === 'DISPATCHER' && userId) {
+      const activeRoster = await this.prisma.roster.findFirst({
+        where: { isActive: true },
       });
-      if (!terminal) {
-        throw new BadRequestException(`Terminal with code "${terminalCode}" not found.`);
+      if (!activeRoster) {
+        return [];
       }
-      where.terminalId = terminal.id;
+      const assignment = await this.prisma.rosterDispatcherAssignment.findFirst({
+        where: {
+          rosterId: activeRoster.id,
+          dispatcherId: userId,
+        },
+      });
+      if (!assignment) {
+        return [];
+      }
+      where.routeId = assignment.routeId;
+      where.rosterId = activeRoster.id;
+    } else {
+      if (terminalCode) {
+        where.route = {
+          terminals: {
+            some: {
+              terminal: {
+                code: terminalCode,
+              },
+            },
+          },
+        };
+      }
+
+      if (weekNumber) {
+        where.roster = {
+          weekNumber,
+        };
+      }
     }
 
-    if (weekNumber) {
-      where.weekNumber = weekNumber;
-    }
-
-    return this.prisma.vehicleSchedule.findMany({
+    const assignments = await this.prisma.rosterVehicleAssignment.findMany({
       where,
-      orderBy: [{ weekNumber: 'desc' }, { importedAt: 'desc' }],
+      orderBy: [
+        { roster: { weekNumber: 'desc' } },
+        { createdAt: 'desc' },
+      ],
       include: {
-        vehicle:  { select: { plateNumber: true, ownerName: true, status: true } },
-        terminal: { select: { name: true, code: true } },
-        route:    { select: { code: true, origin: true, destination: true, baseFareETB: true } },
+        vehicle: { select: { plateNumber: true, ownerName: true, status: true } },
+        roster: true,
+        route: {
+          include: {
+            terminals: {
+              include: {
+                terminal: true,
+              },
+            },
+          },
+        },
       },
+    });
+
+    return assignments.map((a) => {
+      const firstTerminalLink = a.route.terminals[0];
+      const firstTerminal = firstTerminalLink?.terminal ?? { id: '', name: 'Unknown', code: 'UNK', location: '' };
+      return {
+        id: a.id,
+        weekNumber: a.roster.weekNumber,
+        validFrom: a.roster.startDate,
+        validUntil: a.roster.endDate,
+        status: a.roster.isActive ? 'ACTIVE' : 'INACTIVE',
+        importedAt: a.createdAt,
+        vehicle: a.vehicle,
+        terminal: {
+          id: firstTerminal.id,
+          name: firstTerminal.name,
+          code: firstTerminal.code,
+        },
+        route: {
+          id: a.route.id,
+          code: a.route.code,
+          origin: a.route.origin,
+          destination: a.route.destination,
+          baseFareETB: a.route.baseFareETB,
+        },
+      };
     });
   }
 
   // ── Get all terminals (for the terminal selector dropdown) ──────────────────
-  async getTerminals() {
+  async getTerminals(params?: { userId?: string; userRole?: string }) {
+    if (params?.userRole === 'DISPATCHER' && params.userId) {
+      const activeRoster = await this.prisma.roster.findFirst({
+        where: { isActive: true },
+      });
+      if (!activeRoster) return [];
+      const assignment = await this.prisma.rosterDispatcherAssignment.findFirst({
+        where: {
+          rosterId: activeRoster.id,
+          dispatcherId: params.userId,
+        },
+        include: { terminal: true },
+      });
+      if (!assignment) return [];
+      return [{
+        id: assignment.terminal.id,
+        name: assignment.terminal.name,
+        code: assignment.terminal.code,
+        location: assignment.terminal.location,
+      }];
+    }
     return this.prisma.terminal.findMany({
       where: { isActive: true },
       orderBy: { name: 'asc' },
       select: { id: true, name: true, code: true, location: true },
+    });
+  }
+
+  // ── Assign a dispatcher to a terminal and route on the active roster ───────
+  async assignDispatcher(data: {
+    dispatcherId: string;
+    terminalId: string;
+    routeId: string;
+  }) {
+    let activeRoster = await this.prisma.roster.findFirst({
+      where: { isActive: true },
+    });
+
+    if (!activeRoster) {
+      activeRoster = await this.prisma.roster.findFirst({
+        orderBy: { weekNumber: 'desc' },
+      });
+    }
+
+    if (!activeRoster) {
+      throw new BadRequestException(
+        'No active or recent roster found. Please upload a schedule CSV first.',
+      );
+    }
+
+    const dispatcher = await this.prisma.user.findUnique({
+      where: { id: data.dispatcherId },
+    });
+    if (!dispatcher || dispatcher.roleName !== 'DISPATCHER') {
+      throw new BadRequestException('Invalid dispatcher user.');
+    }
+
+    const terminal = await this.prisma.terminal.findUnique({
+      where: { id: data.terminalId },
+    });
+    if (!terminal) {
+      throw new BadRequestException('Terminal not found.');
+    }
+
+    const route = await this.prisma.route.findUnique({
+      where: { id: data.routeId },
+    });
+    if (!route) {
+      throw new BadRequestException('Route not found.');
+    }
+
+    return this.prisma.rosterDispatcherAssignment.upsert({
+      where: {
+        rosterId_dispatcherId: {
+          rosterId: activeRoster.id,
+          dispatcherId: dispatcher.id,
+        },
+      },
+      create: {
+        rosterId: activeRoster.id,
+        dispatcherId: dispatcher.id,
+        terminalId: terminal.id,
+        routeId: route.id,
+      },
+      update: {
+        terminalId: terminal.id,
+        routeId: route.id,
+      },
+    });
+  }
+
+  // ── Get all dispatcher assignments on the active roster ────────────────────
+  async getDispatcherAssignments() {
+    const activeRoster = await this.prisma.roster.findFirst({
+      where: { isActive: true },
+    });
+    if (!activeRoster) return [];
+
+    return this.prisma.rosterDispatcherAssignment.findMany({
+      where: { rosterId: activeRoster.id },
+      include: {
+        dispatcher: { select: { id: true, username: true, email: true } },
+        terminal: { select: { id: true, name: true, code: true } },
+        route: { select: { id: true, code: true, origin: true, destination: true } },
+      },
     });
   }
 }

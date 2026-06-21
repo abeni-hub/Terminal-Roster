@@ -3,13 +3,59 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { db, LocalDispatchRecord } from '../../../db/schema';
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
+
 export default function HistoryPage() {
   const [history, setHistory] = useState<LocalDispatchRecord[]>([]);
 
   const loadHistory = useCallback(async () => {
-    const list = await db.dispatches.toArray();
-    list.sort((a, b) => b.dispatchTime - a.dispatchTime);
-    setHistory(list);
+    // Load from local IndexedDB first (offline support)
+    const localList = await db.dispatches.toArray();
+
+    // If online, also fetch from server and merge
+    const token = localStorage.getItem('aatdrs_token');
+    if (navigator.onLine && token) {
+      try {
+        const res = await fetch(`${API_URL}/queue/history`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const serverData = await res.json();
+          const serverRecords: LocalDispatchRecord[] = serverData.map((item: any) => ({
+            id: item.id,
+            terminalId: item.terminalId,
+            routeId: item.routeId,
+            vehicleId: item.vehicle?.plateNumber ?? item.vehicleId,
+            dispatcherId: item.dispatcher?.username ?? item.dispatcherId ?? 'system',
+            dispatchTime: new Date(item.checkInTime).getTime(),
+            fareChargedETB: parseFloat(item.fareChargedETB ?? 0),
+            syncId: item.syncId ?? '',
+            isSynced: 1,
+          }));
+
+          // Merge: server records take precedence over local by syncId
+          const mergedMap = new Map<string, LocalDispatchRecord>();
+          for (const r of localList) {
+            if (r.syncId) mergedMap.set(r.syncId, r);
+            else mergedMap.set(r.id, r);
+          }
+          for (const r of serverRecords) {
+            if (r.syncId) mergedMap.set(r.syncId, r);
+            else mergedMap.set(r.id, r);
+          }
+
+          const merged = Array.from(mergedMap.values());
+          merged.sort((a, b) => b.dispatchTime - a.dispatchTime);
+          setHistory(merged);
+          return;
+        }
+      } catch {
+        // Fall through to local-only
+      }
+    }
+
+    localList.sort((a, b) => b.dispatchTime - a.dispatchTime);
+    setHistory(localList);
   }, []);
 
   useEffect(() => {

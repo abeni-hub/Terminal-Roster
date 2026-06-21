@@ -40,7 +40,18 @@ export class OverridesService {
       throw new NotFoundException(`Queue entry ${dto.queueEntryId} not found`);
     }
 
-    if (queueEntry.status !== QueueStatus.PENDING) {
+    if (queueEntry.status !== QueueStatus.WAITING) {
+      if (queueEntry.status === QueueStatus.CANCELLED) {
+        const existingLog = await this.prisma.overrideLog.findUnique({
+          where: { queueEntryId: dto.queueEntryId },
+        });
+        if (existingLog) {
+          return {
+            queueEntry,
+            overrideLog: existingLog,
+          };
+        }
+      }
       throw new BadRequestException(`Queue entry is not pending (current status: ${queueEntry.status})`);
     }
 
@@ -55,10 +66,10 @@ export class OverridesService {
 
     // 4. Update queue status and create override log atomically in a transaction
     return this.prisma.$transaction(async (tx) => {
-      // Mark queue status as SKIPPED
+      // Mark queue status as CANCELLED
       const updatedQueue = await tx.queueEntry.update({
         where: { id: queueEntry.id },
-        data: { status: QueueStatus.SKIPPED },
+        data: { status: QueueStatus.CANCELLED, checkOutTime: new Date() },
       });
 
       // Insert override audit entry

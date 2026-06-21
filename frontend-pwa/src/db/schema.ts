@@ -30,7 +30,9 @@ export interface LocalScheduleEntry {
   vehicleStatus: string;
   terminalName: string;
   terminalCode: string;
+  terminalId?: string;  // database UUID
   routeCode: string;
+  routeId?: string;     // database UUID
   origin: string;
   destination: string;
   baseFareETB: number;
@@ -102,12 +104,25 @@ export class OfflineDatabase extends Dexie {
 
   constructor() {
     super('AATDRS_Terminal_DB');
+    // Version 2: original schema
     this.version(2).stores({
       vehicles:  'id, plateNumber, assignedRouteId',
       routes:    'id, code',
       terminals: 'id, code, name',
       schedules: 'id, weekNumber, terminalCode, status',
       queue:     'id, [terminalId+routeId], status, checkInTime',
+      dispatches:'id, syncId, isSynced, dispatchTime',
+      violations:'id, vehicleId, timestamp',
+      syncQueue: '++id, action, timestamp',
+      auditLogs: 'id, timestamp',
+    });
+    // Version 3: add syncId index to queue table
+    this.version(3).stores({
+      vehicles:  'id, plateNumber, assignedRouteId',
+      routes:    'id, code',
+      terminals: 'id, code, name',
+      schedules: 'id, weekNumber, terminalCode, status',
+      queue:     'id, [terminalId+routeId], status, checkInTime, syncId',
       dispatches:'id, syncId, isSynced, dispatchTime',
       violations:'id, vehicleId, timestamp',
       syncQueue: '++id, action, timestamp',

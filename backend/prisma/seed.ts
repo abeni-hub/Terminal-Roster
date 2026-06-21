@@ -6,7 +6,6 @@ import {
   QueueStatus,
   OverrideType,
   ViolationType,
-  AssignmentStatus,
 } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
@@ -29,8 +28,9 @@ async function main() {
   await prisma.dispatchRecord.deleteMany({});
   await prisma.violationRecord.deleteMany({});
   await prisma.deviceBinding.deleteMany({});
-  await prisma.vehicleSchedule.deleteMany({});
-  await prisma.vehicleRouteAssignment.deleteMany({});
+  await prisma.rosterDispatcherAssignment.deleteMany({});
+  await prisma.rosterVehicleAssignment.deleteMany({});
+  await prisma.roster.deleteMany({});
   await prisma.terminalRoute.deleteMany({});
   await prisma.userTerminalAssignment.deleteMany({});
   await prisma.user.deleteMany({});
@@ -138,50 +138,62 @@ async function main() {
   };
   console.log('  ✔ Vehicles seeded (12).');
 
-  // ── 6. VEHICLE SCHEDULES (Week 24, government CSV format) ─────────────────
-  const validFrom  = new Date('2026-03-17T00:00:00Z');
-  const validUntil = new Date('2026-03-23T23:59:59Z');
-  const ACTIVE = AssignmentStatus.ACTIVE;
+  // ── 6. WEEKLY ROSTERS & ASSIGNMENTS (Week 24) ─────────────────────────────
+  const nowTime = new Date();
+  const validFrom = new Date(nowTime);
+  validFrom.setDate(nowTime.getDate() - 3);
+  validFrom.setUTCHours(0, 0, 0, 0);
 
-  await prisma.vehicleSchedule.createMany({
-    data: [
-      { vehicleId: vByPlate('AA-2-B44910').id, terminalId: megenagna.id, routeId: routeMegBole.id,     weekNumber: 24, validFrom, validUntil, status: ACTIVE },
-      { vehicleId: vByPlate('AA-2-C29918').id, terminalId: megenagna.id, routeId: routeMegBole.id,     weekNumber: 24, validFrom, validUntil, status: ACTIVE },
-      { vehicleId: vByPlate('AA-2-A77615').id, terminalId: megenagna.id, routeId: routeMegBole.id,     weekNumber: 24, validFrom, validUntil, status: ACTIVE },
-      { vehicleId: vByPlate('CODE2-89012').id, terminalId: megenagna.id, routeId: routeMegBole.id,     weekNumber: 24, validFrom, validUntil, status: ACTIVE },
-      { vehicleId: vByPlate('AA-2-B9988').id,  terminalId: megenagna.id, routeId: routeMegBole.id,     weekNumber: 24, validFrom, validUntil, status: ACTIVE },
-      { vehicleId: vByPlate('AA-2-X1122').id,  terminalId: megenagna.id, routeId: routeMegBole.id,     weekNumber: 24, validFrom, validUntil, status: ACTIVE },
-      { vehicleId: vByPlate('AA-3-A1234').id,  terminalId: merkato.id,   routeId: routeMrkPiassa.id,   weekNumber: 24, validFrom, validUntil, status: ACTIVE },
-      { vehicleId: vByPlate('AA-3-B5678').id,  terminalId: merkato.id,   routeId: routeMrkPiassa.id,   weekNumber: 24, validFrom, validUntil, status: ACTIVE },
-      { vehicleId: vByPlate('AA-4-C9012').id,  terminalId: kaliti.id,    routeId: routeKalSaris.id,    weekNumber: 24, validFrom, validUntil, status: ACTIVE },
-      { vehicleId: vByPlate('AA-5-D3456').id,  terminalId: piassa.id,    routeId: routePiaAratKilo.id, weekNumber: 24, validFrom, validUntil, status: ACTIVE },
-      { vehicleId: vByPlate('AA-2-E7890').id,  terminalId: megenagna.id, routeId: routeMegBole.id,     weekNumber: 24, validFrom, validUntil, status: ACTIVE },
-      { vehicleId: vByPlate('AA-2-F2345').id,  terminalId: megenagna.id, routeId: routeMegBole.id,     weekNumber: 24, validFrom, validUntil, status: ACTIVE },
-    ],
-    skipDuplicates: true,
-  });
-  console.log('  ✔ Vehicle schedules seeded (12) — Week 24.');
+  const validUntil = new Date(nowTime);
+  validUntil.setDate(nowTime.getDate() + 4);
+  validUntil.setUTCHours(23, 59, 59, 999);
 
-  // ── 7. VEHICLE ROUTE ASSIGNMENTS ──────────────────────────────────────────
-  const expiry = new Date('2026-03-23T23:59:59Z');
-  await prisma.vehicleRouteAssignment.createMany({
+  const roster = await prisma.roster.create({
+    data: {
+      name: `Week 24 – ${validFrom.toISOString().slice(0, 10)} to ${validUntil.toISOString().slice(0, 10)}`,
+      weekNumber: 24,
+      startDate: validFrom,
+      endDate: validUntil,
+      isActive: true,
+    },
+  });
+
+  await prisma.rosterVehicleAssignment.createMany({
     data: [
-      { vehicleId: vByPlate('AA-2-B44910').id, routeId: routeMegBole.id,     expiresAt: expiry },
-      { vehicleId: vByPlate('AA-2-C29918').id, routeId: routeMegBole.id,     expiresAt: expiry },
-      { vehicleId: vByPlate('AA-3-A1234').id,  routeId: routeMrkPiassa.id,   expiresAt: expiry },
-      { vehicleId: vByPlate('AA-4-C9012').id,  routeId: routeKalSaris.id,    expiresAt: expiry },
-      { vehicleId: vByPlate('AA-5-D3456').id,  routeId: routePiaAratKilo.id, expiresAt: expiry },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-2-B44910').id, routeId: routeMegBole.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-2-C29918').id, routeId: routeMegBole.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-2-A77615').id, routeId: routeMegBole.id },
+      { rosterId: roster.id, vehicleId: vByPlate('CODE2-89012').id, routeId: routeMegBole.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-2-B9988').id,  routeId: routeMegBole.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-2-X1122').id,  routeId: routeMegBole.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-3-A1234').id,  routeId: routeMrkPiassa.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-3-B5678').id,  routeId: routeMrkPiassa.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-4-C9012').id,  routeId: routeKalSaris.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-5-D3456').id,  routeId: routePiaAratKilo.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-2-E7890').id,  routeId: routeMegBole.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-2-F2345').id,  routeId: routeMegBole.id },
     ],
   });
-  console.log('  ✔ Vehicle route assignments seeded (5).');
+  console.log('  ✔ Weekly rosters and vehicle assignments seeded.');
+
+  // Assign dispatcher to terminal/route
+  await prisma.rosterDispatcherAssignment.create({
+    data: {
+      rosterId: roster.id,
+      dispatcherId: dispatcher.id,
+      routeId: routeMegBole.id,
+      terminalId: megenagna.id,
+    },
+  });
+  console.log('  ✔ Roster dispatcher assignments seeded.');
 
   // ── 8. QUEUE ENTRIES (demo) ───────────────────────────────────────────────
   const [queueA, queueB] = await Promise.all([
     prisma.queueEntry.create({
-      data: { terminalId: megenagna.id, routeId: routeMegBole.id, vehicleId: vByPlate('AA-2-B44910').id, sequence: 1, status: QueueStatus.PENDING, syncId: 'sync-q-001' },
+      data: { terminalId: megenagna.id, routeId: routeMegBole.id, vehicleId: vByPlate('AA-2-B44910').id, sequence: 1, status: QueueStatus.WAITING, syncId: 'sync-q-001' },
     }),
     prisma.queueEntry.create({
-      data: { terminalId: megenagna.id, routeId: routeMegBole.id, vehicleId: vByPlate('AA-2-C29918').id, sequence: 2, status: QueueStatus.PENDING, syncId: 'sync-q-002' },
+      data: { terminalId: megenagna.id, routeId: routeMegBole.id, vehicleId: vByPlate('AA-2-C29918').id, sequence: 2, status: QueueStatus.WAITING, syncId: 'sync-q-002' },
     }),
   ]);
   console.log('  ✔ Queue entries seeded (2).');
@@ -189,8 +201,8 @@ async function main() {
   // ── 9. DISPATCH RECORDS ───────────────────────────────────────────────────
   await prisma.dispatchRecord.createMany({
     data: [
-      { terminalId: megenagna.id, routeId: routeMegBole.id,   vehicleId: vByPlate('AA-2-A77615').id, dispatcherId: dispatcher.id, fareChargedETB: 15.00, municipalCommission: 10.00, platformCommission: 1.00, isReconciled: true,  syncId: 'sync-d-001' },
-      { terminalId: megenagna.id, routeId: routeMegPiassa.id, vehicleId: vByPlate('CODE2-89012').id, dispatcherId: dispatcher.id, fareChargedETB: 20.00, municipalCommission: 10.00, platformCommission: 1.00, isReconciled: false, syncId: 'sync-d-002' },
+      { terminalId: megenagna.id, routeId: routeMegBole.id,   vehicleId: vByPlate('AA-2-A77615').id, dispatcherId: dispatcher.id, checkInTime: new Date('2026-03-17T08:00:00Z'), fareChargedETB: 15.00, municipalCommission: 10.00, platformCommission: 1.00, isReconciled: true,  syncId: 'sync-d-001' },
+      { terminalId: megenagna.id, routeId: routeMegPiassa.id, vehicleId: vByPlate('CODE2-89012').id, dispatcherId: dispatcher.id, checkInTime: new Date('2026-03-17T09:00:00Z'), fareChargedETB: 20.00, municipalCommission: 10.00, platformCommission: 1.00, isReconciled: false, syncId: 'sync-d-002' },
     ],
   });
   console.log('  ✔ Dispatch records seeded (2).');

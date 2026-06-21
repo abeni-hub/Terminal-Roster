@@ -27,6 +27,15 @@ export default function UsersPage() {
 
   const [msg, setMsg] = useState('');
 
+  // Dispatcher Assignment Roster states
+  const [assignments, setAssignments] = useState<any[]>([]);
+  const [terminals, setTerminals] = useState<any[]>([]);
+  const [routes, setRoutes] = useState<any[]>([]);
+  const [assignUser, setAssignUser] = useState<User | null>(null);
+  const [selectedTerminalId, setSelectedTerminalId] = useState('');
+  const [selectedRouteId, setSelectedRouteId] = useState('');
+  const [assignMsg, setAssignMsg] = useState('');
+
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     const token = localStorage.getItem('aatdrs_token');
@@ -45,9 +54,79 @@ export default function UsersPage() {
     }
   }, []);
 
+  const fetchAssignments = useCallback(async () => {
+    const token = localStorage.getItem('aatdrs_token');
+    try {
+      const res = await fetch(`${API_URL}/roster/dispatcher-assignments`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAssignments(data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const fetchTerminalsAndRoutes = useCallback(async () => {
+    const token = localStorage.getItem('aatdrs_token');
+    try {
+      const [termRes, routeRes] = await Promise.all([
+        fetch(`${API_URL}/terminals`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_URL}/routes`, { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      if (termRes.ok) {
+        const termData = await termRes.json();
+        setTerminals(termData);
+        if (termData.length > 0) setSelectedTerminalId(termData[0].id);
+      }
+      if (routeRes.ok) {
+        const routeData = await routeRes.json();
+        setRoutes(routeData);
+        if (routeData.length > 0) setSelectedRouteId(routeData[0].id);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
   useEffect(() => {
     fetchUsers();
-  }, [fetchUsers]);
+    fetchAssignments();
+    fetchTerminalsAndRoutes();
+  }, [fetchUsers, fetchAssignments, fetchTerminalsAndRoutes]);
+
+  const handleAssignSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!assignUser) return;
+    const token = localStorage.getItem('aatdrs_token');
+    try {
+      const res = await fetch(`${API_URL}/roster/assign-dispatcher`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          dispatcherId: assignUser.id,
+          terminalId: selectedTerminalId,
+          routeId: selectedRouteId,
+        }),
+      });
+      if (res.ok) {
+        setMsg('Dispatcher assigned to terminal/route successfully!');
+        setAssignUser(null);
+        fetchAssignments();
+        setTimeout(() => setMsg(''), 4000);
+      } else {
+        const err = await res.json().catch(() => null);
+        setAssignMsg(`Error: ${err?.message || 'Assignment failed'}`);
+      }
+    } catch (err) {
+      setAssignMsg('Network error occurred.');
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -289,6 +368,19 @@ export default function UsersPage() {
                         >
                           Edit
                         </button>
+                        {u.roleName === 'DISPATCHER' && u.isActive && (
+                          <button
+                            onClick={() => {
+                              setAssignUser(u);
+                              setAssignMsg('');
+                              if (terminals.length > 0) setSelectedTerminalId(terminals[0].id);
+                              if (routes.length > 0) setSelectedRouteId(routes[0].id);
+                            }}
+                            className="bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/10 text-[10px] py-1 px-2.5 rounded transition-all font-semibold"
+                          >
+                            Assign Route
+                          </button>
+                        )}
                         {u.isActive && (
                           <button
                             onClick={() => handleDelete(u.id)}
@@ -306,6 +398,115 @@ export default function UsersPage() {
           )}
         </div>
       </div>
+
+      {/* Dispatcher Roster Assignments List */}
+      <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-md">
+        <h3 className="text-sm font-bold text-white mb-4 uppercase tracking-wider">Active Roster Dispatcher Assignments</h3>
+        {assignments.length === 0 ? (
+          <p className="text-slate-500 text-xs text-center py-6">No dispatcher assignments configured on the active roster.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-slate-800 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  <th className="pb-3 pr-4">Dispatcher</th>
+                  <th className="pb-3 pr-4">Email</th>
+                  <th className="pb-3 pr-4">Terminal</th>
+                  <th className="pb-3 pr-4">Assigned Route</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60 text-slate-300 font-medium">
+                {assignments.map((as) => (
+                  <tr key={as.id} className="hover:bg-slate-900/30 transition-colors">
+                    <td className="py-3 pr-4 font-bold text-white">{as.dispatcher.username}</td>
+                    <td className="py-3 pr-4 text-slate-400 font-mono text-[11px]">{as.dispatcher.email}</td>
+                    <td className="py-3 pr-4 text-slate-200">{as.terminal.name} ({as.terminal.code})</td>
+                    <td className="py-3 pr-4">
+                      <span className="text-teal-400 font-bold font-mono">{as.route.code}</span>
+                      <span className="text-slate-500 ml-1 text-[10px]">({as.route.origin} → {as.route.destination})</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── Dispatcher Assignment Modal ── */}
+      {assignUser && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative">
+            <h3 className="text-base font-bold text-white mb-2">Assign Dispatcher Route</h3>
+            <p className="text-xs text-slate-400 mb-5">
+              Assign dispatcher <span className="text-indigo-400 font-bold">@{assignUser.username}</span> to a terminal and route on the active weekly roster.
+            </p>
+
+            {assignMsg && (
+              <div className="mb-4 p-2.5 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-lg">
+                {assignMsg}
+              </div>
+            )}
+
+            <form onSubmit={handleAssignSubmit} className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Select Terminal</label>
+                {terminals.length === 0 ? (
+                  <p className="text-xs text-amber-400">No active terminals found. Please create one first.</p>
+                ) : (
+                  <select
+                    value={selectedTerminalId}
+                    onChange={(e) => setSelectedTerminalId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-lg text-xs px-3.5 py-2.5 focus:outline-none focus:border-indigo-500"
+                  >
+                    {terminals.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} ({t.code})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Select Route</label>
+                {routes.length === 0 ? (
+                  <p className="text-xs text-amber-400">No active routes found. Please create one first.</p>
+                ) : (
+                  <select
+                    value={selectedRouteId}
+                    onChange={(e) => setSelectedRouteId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-lg text-xs px-3.5 py-2.5 focus:outline-none focus:border-indigo-500"
+                  >
+                    {routes.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.code} ({r.origin} → {r.destination})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setAssignUser(null)}
+                  className="bg-slate-800 hover:bg-slate-755 text-slate-300 text-xs py-2 px-4 rounded-lg transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={terminals.length === 0 || routes.length === 0}
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold py-2 px-4 rounded-lg transition-all disabled:opacity-40"
+                >
+                  Save Assignment
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -5,26 +5,19 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RoleName } from '@prisma/client';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
+import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
+import { IsNotEmpty, IsString } from 'class-validator';
 
-class CreateUserDto {
-  username!: string;
-  email!: string;
-  password?: string;
-  roleName!: RoleName;
-}
-
-class UpdateUserDto {
-  username?: string;
-  email?: string;
-  password?: string;
-  roleName?: RoleName;
-  isActive?: boolean;
-}
-
-class SettingUpdateDto {
+export class SettingUpdateDto {
+  @IsString()
+  @IsNotEmpty()
   key!: string;
+
+  @IsString()
+  @IsNotEmpty()
   value!: string;
 }
+
 
 @ApiTags('System Administration')
 @ApiBearerAuth()

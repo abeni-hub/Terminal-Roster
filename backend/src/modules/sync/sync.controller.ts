@@ -2,6 +2,8 @@ import { Controller, Post, Body, UseGuards } from '@nestjs/common';
 import { SyncService } from './sync.service';
 import { BatchSyncDto } from './dto/sync.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { User } from '@prisma/client';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 
 @ApiTags('Synchronization Engine')
@@ -13,7 +15,7 @@ export class SyncController {
 
   @Post('batch')
   @ApiOperation({ summary: 'Synchronize pending offline outbox transaction packets from browser IndexedDB' })
-  async processBatchSync(@Body() dto: BatchSyncDto) {
-    return this.syncService.processBatchSync(dto);
+  async processBatchSync(@Body() dto: BatchSyncDto, @CurrentUser() user: any) {
+    return this.syncService.processBatchSync(dto, user.id, user.roleName);
   }
 }

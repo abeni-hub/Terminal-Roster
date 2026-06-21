@@ -18,15 +18,15 @@ export class FifoQueueController {
   @Post('check-in')
   @Roles(RoleName.SYSTEM_ADMIN, RoleName.DISPATCHER)
   @ApiOperation({ summary: 'Check in a vehicle into the queue (Dispatcher only)' })
-  async checkIn(@Body() dto: CheckInVehicleDto) {
-    return this.fifoQueueService.checkIn(dto);
+  async checkIn(@Body() dto: CheckInVehicleDto, @CurrentUser() user: any) {
+    return this.fifoQueueService.checkIn(dto, user.id, user.roleName);
   }
 
   @Post('dispatch')
   @Roles(RoleName.SYSTEM_ADMIN, RoleName.DISPATCHER)
   @ApiOperation({ summary: 'Dispatch a vehicle (Dispatcher only)' })
-  async dispatch(@Body() dto: DispatchVehicleDto, @CurrentUser() user: { id: string }) {
-    return this.fifoQueueService.dispatch(dto, user.id);
+  async dispatch(@Body() dto: DispatchVehicleDto, @CurrentUser() user: any) {
+    return this.fifoQueueService.dispatch(dto, user.id, user.roleName);
   }
 
   @Get('live/:terminalId/:routeId')
@@ -34,7 +34,14 @@ export class FifoQueueController {
   async getLiveQueue(
     @Param('terminalId') terminalId: string,
     @Param('routeId') routeId: string,
+    @CurrentUser() user: any,
   ) {
-    return this.fifoQueueService.getLiveQueue(terminalId, routeId);
+    return this.fifoQueueService.getLiveQueue(terminalId, routeId, user.id, user.roleName);
+  }
+
+  @Get('history')
+  @ApiOperation({ summary: 'Get recent dispatch history (last 50 records)' })
+  async getHistory(@CurrentUser() user: any) {
+    return this.fifoQueueService.getDispatchHistory(user.id, user.roleName);
   }
 }

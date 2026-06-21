@@ -33,7 +33,7 @@ const mockQueueEntry = {
   routeId: 'route-uuid-1',
   vehicleId: 'vehicle-uuid-1',
   checkInTime: new Date('2026-06-13T08:00:00Z'),
-  status: QueueStatus.PENDING,
+  status: QueueStatus.WAITING,
   sequence: 1,
   syncId: 'sync-id-1',
 };
@@ -41,15 +41,23 @@ const mockQueueEntry = {
 const mockPrisma = {
   vehicle: {
     findUnique: jest.fn(),
+    findFirst: jest.fn(),
   },
   queueEntry: {
+    findUnique: jest.fn(),
     findFirst: jest.fn(),
     findMany: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
     count: jest.fn(),
   },
-  vehicleRouteAssignment: {
+  rosterVehicleAssignment: {
+    findFirst: jest.fn(),
+  },
+  rosterDispatcherAssignment: {
+    findFirst: jest.fn(),
+  },
+  roster: {
     findFirst: jest.fn(),
   },
   terminalRoute: {
@@ -59,10 +67,15 @@ const mockPrisma = {
     create: jest.fn(),
   },
   dispatchRecord: {
+    findUnique: jest.fn(),
     create: jest.fn(),
   },
   route: {
     findUnique: jest.fn(),
+    findFirst: jest.fn(),
+  },
+  terminal: {
+    findFirst: jest.fn(),
   },
   $transaction: jest.fn(),
 };
@@ -80,6 +93,67 @@ describe('FifoQueueService', () => {
 
     service = module.get<FifoQueueService>(FifoQueueService);
     jest.clearAllMocks();
+    
+    // Reset mock resolved values to prevent test leakage
+    mockPrisma.queueEntry.findUnique.mockReset();
+    mockPrisma.vehicle.findUnique.mockReset();
+    mockPrisma.vehicle.findFirst.mockReset();
+    mockPrisma.queueEntry.findFirst.mockReset();
+    mockPrisma.queueEntry.findMany.mockReset();
+    mockPrisma.queueEntry.create.mockReset();
+    mockPrisma.queueEntry.update.mockReset();
+    mockPrisma.queueEntry.count.mockReset();
+    mockPrisma.rosterVehicleAssignment.findFirst.mockReset();
+    mockPrisma.rosterDispatcherAssignment.findFirst.mockReset();
+    mockPrisma.roster.findFirst.mockReset();
+    mockPrisma.terminalRoute.findUnique.mockReset();
+    mockPrisma.violationRecord.create.mockReset();
+    mockPrisma.dispatchRecord.findUnique.mockReset();
+    mockPrisma.dispatchRecord.create.mockReset();
+    mockPrisma.route.findUnique.mockReset();
+    mockPrisma.route.findFirst.mockReset();
+    mockPrisma.terminal.findFirst.mockReset();
+    mockPrisma.$transaction.mockReset();
+
+    // Default mock implementation for resolving vehicle by ID or plate number
+    mockPrisma.vehicle.findFirst.mockImplementation(async (args: any) => {
+      const orList = args?.where?.OR || [];
+      const idQuery = orList.find((x: any) => x.id !== undefined)?.id;
+      const plateQuery = orList.find((x: any) => x.plateNumber !== undefined)?.plateNumber;
+      return {
+        ...mockVehicle,
+        id: idQuery || 'vehicle-uuid-1',
+        plateNumber: plateQuery || mockVehicle.plateNumber,
+      };
+    });
+
+    // Default mock implementation for resolving route by ID or code
+    mockPrisma.route.findFirst.mockImplementation(async (args: any) => {
+      const orList = args?.where?.OR || [];
+      const idQuery = orList.find((x: any) => x.id !== undefined)?.id;
+      const codeQuery = orList.find((x: any) => x.code !== undefined)?.code;
+      return {
+        ...mockRoute,
+        id: idQuery || 'route-uuid-1',
+        code: codeQuery || mockRoute.code,
+      };
+    });
+
+    // Default mock implementation for resolving terminal by ID or code
+    mockPrisma.terminal.findFirst.mockImplementation(async (args: any) => {
+      const orList = args?.where?.OR || [];
+      const idQuery = orList.find((x: any) => x.id !== undefined)?.id;
+      const codeQuery = orList.find((x: any) => x.code !== undefined)?.code;
+      return {
+        id: idQuery || 'terminal-uuid-1',
+        code: codeQuery || 'MEG-01',
+        name: 'Megenagna Taxi Terminal',
+        location: '9.0223,38.8021',
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+    });
   });
 
   // ── checkIn ────────────────────────────────────────────────────────────────
@@ -92,10 +166,22 @@ describe('FifoQueueService', () => {
       syncId: 'sync-id-1',
     };
 
+    it('should return existing queue entry if syncId already exists', async () => {
+      mockPrisma.queueEntry.findUnique.mockResolvedValue(mockQueueEntry);
+
+      const result = await service.checkIn(dto);
+
+      expect(mockPrisma.queueEntry.findUnique).toHaveBeenCalledWith({
+        where: { syncId: dto.syncId },
+        include: { vehicle: true },
+      });
+      expect(result).toEqual(mockQueueEntry);
+    });
+
     it('should successfully check in an active vehicle on an assigned route', async () => {
       mockPrisma.vehicle.findUnique.mockResolvedValue(mockVehicle);
       mockPrisma.queueEntry.findFirst.mockResolvedValue(null);         // Not already in queue
-      mockPrisma.vehicleRouteAssignment.findFirst.mockResolvedValue({ id: 'assignment-1' }); // Valid roster
+      mockPrisma.rosterVehicleAssignment.findFirst.mockResolvedValue({ id: 'assignment-1' }); // Valid roster
       mockPrisma.terminalRoute.findUnique.mockResolvedValue({ id: 'tr-1' }); // Terminal serves route
       mockPrisma.queueEntry.count.mockResolvedValue(0);                // First entry today
       mockPrisma.queueEntry.create.mockResolvedValue({
@@ -144,7 +230,7 @@ describe('FifoQueueService', () => {
     it('should throw BadRequestException and log ROUTE_HOPPING violation if vehicle has no valid roster assignment', async () => {
       mockPrisma.vehicle.findUnique.mockResolvedValue(mockVehicle);
       mockPrisma.queueEntry.findFirst.mockResolvedValue(null);
-      mockPrisma.vehicleRouteAssignment.findFirst.mockResolvedValue(null); // No roster assignment
+      mockPrisma.rosterVehicleAssignment.findFirst.mockResolvedValue(null); // No roster assignment
       mockPrisma.violationRecord.create.mockResolvedValue({});
 
       await expect(service.checkIn(dto)).rejects.toThrow(BadRequestException);
@@ -162,7 +248,7 @@ describe('FifoQueueService', () => {
     it('should throw BadRequestException and log UNAUTHORIZED_TERMINAL violation if terminal does not serve the route', async () => {
       mockPrisma.vehicle.findUnique.mockResolvedValue(mockVehicle);
       mockPrisma.queueEntry.findFirst.mockResolvedValue(null);
-      mockPrisma.vehicleRouteAssignment.findFirst.mockResolvedValue({ id: 'assignment-1' });
+      mockPrisma.rosterVehicleAssignment.findFirst.mockResolvedValue({ id: 'assignment-1' });
       mockPrisma.terminalRoute.findUnique.mockResolvedValue(null); // Terminal NOT serving this route
       mockPrisma.violationRecord.create.mockResolvedValue({});
 
@@ -181,7 +267,7 @@ describe('FifoQueueService', () => {
     it('should set sequence to countToday + 1 (monotonically increasing)', async () => {
       mockPrisma.vehicle.findUnique.mockResolvedValue(mockVehicle);
       mockPrisma.queueEntry.findFirst.mockResolvedValue(null);
-      mockPrisma.vehicleRouteAssignment.findFirst.mockResolvedValue({ id: 'a1' });
+      mockPrisma.rosterVehicleAssignment.findFirst.mockResolvedValue({ id: 'a1' });
       mockPrisma.terminalRoute.findUnique.mockResolvedValue({ id: 'tr-1' });
       mockPrisma.queueEntry.count.mockResolvedValue(5); // 5 previous entries today
       mockPrisma.queueEntry.create.mockResolvedValue({
@@ -197,6 +283,38 @@ describe('FifoQueueService', () => {
           data: expect.objectContaining({ sequence: 6 }),
         }),
       );
+    });
+
+    it('should throw BadRequestException if dispatcher is not assigned to the route/terminal on active roster', async () => {
+      mockPrisma.roster.findFirst.mockResolvedValue({ id: 'roster-1' });
+      mockPrisma.rosterDispatcherAssignment.findFirst.mockResolvedValue(null); // No dispatcher assignment for this route
+
+      await expect(
+        service.checkIn(dto, 'dispatcher-1', 'DISPATCHER'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should successfully check in if dispatcher is assigned to the route/terminal on active roster', async () => {
+      mockPrisma.roster.findFirst.mockResolvedValue({ id: 'roster-1' });
+      mockPrisma.rosterDispatcherAssignment.findFirst.mockResolvedValue({
+        id: 'rda-1',
+        rosterId: 'roster-1',
+        dispatcherId: 'dispatcher-1',
+        terminalId: dto.terminalId,
+        routeId: dto.routeId,
+      });
+      mockPrisma.vehicle.findUnique.mockResolvedValue(mockVehicle);
+      mockPrisma.queueEntry.findFirst.mockResolvedValue(null);
+      mockPrisma.rosterVehicleAssignment.findFirst.mockResolvedValue({ id: 'assignment-1' });
+      mockPrisma.terminalRoute.findUnique.mockResolvedValue({ id: 'tr-1' });
+      mockPrisma.queueEntry.count.mockResolvedValue(0);
+      mockPrisma.queueEntry.create.mockResolvedValue({
+        ...mockQueueEntry,
+        vehicle: mockVehicle,
+      });
+
+      const result = await service.checkIn(dto, 'dispatcher-1', 'DISPATCHER');
+      expect(result).toHaveProperty('id', 'queue-uuid-1');
     });
   });
 
@@ -215,6 +333,37 @@ describe('FifoQueueService', () => {
       { ...mockQueueEntry, id: 'queue-uuid-2', vehicleId: 'vehicle-uuid-2', checkInTime: new Date('2026-06-13T08:02:00Z'), sequence: 2 },
       { ...mockQueueEntry, id: 'queue-uuid-3', vehicleId: 'vehicle-uuid-3', checkInTime: new Date('2026-06-13T08:05:00Z'), sequence: 3 },
     ];
+
+    it('should return existing dispatch record if syncId already exists', async () => {
+      const mockDispatchRecord = {
+        id: 'dispatch-uuid-1',
+        terminalId: 'terminal-uuid-1',
+        routeId: 'route-uuid-1',
+        vehicleId: 'vehicle-uuid-1',
+        dispatcherId,
+        checkInTime: new Date(),
+        dispatchTime: new Date(),
+        fareChargedETB: 15.0,
+        syncId: 'sync-id-1',
+      };
+      mockPrisma.dispatchRecord.findUnique.mockResolvedValue(mockDispatchRecord);
+      mockPrisma.queueEntry.findFirst.mockResolvedValue({
+        ...mockQueueEntry,
+        status: QueueStatus.DISPATCHED,
+      });
+
+      const dtoWithSync = { ...dto, syncId: 'sync-id-1' };
+      const result = await service.dispatch(dtoWithSync, dispatcherId);
+
+      expect(mockPrisma.dispatchRecord.findUnique).toHaveBeenCalledWith({
+        where: { syncId: 'sync-id-1' },
+        include: { vehicle: true, route: true },
+      });
+      expect(result).toEqual({
+        queueEntry: expect.objectContaining({ status: QueueStatus.DISPATCHED }),
+        dispatchRecord: mockDispatchRecord,
+      });
+    });
 
     it('should dispatch the FIRST vehicle in queue (strict FIFO)', async () => {
       mockPrisma.queueEntry.findMany.mockResolvedValue(mockQueue);
@@ -257,6 +406,15 @@ describe('FifoQueueService', () => {
 
       await expect(service.dispatch(dto, dispatcherId)).rejects.toThrow(BadRequestException);
     });
+
+    it('should throw BadRequestException if dispatcher is not assigned to the route/terminal on active roster during dispatch', async () => {
+      mockPrisma.roster.findFirst.mockResolvedValue({ id: 'roster-1' });
+      mockPrisma.rosterDispatcherAssignment.findFirst.mockResolvedValue(null); // No dispatcher assignment for this route
+
+      await expect(
+        service.dispatch(dto, 'dispatcher-1', 'DISPATCHER'),
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 
   // ── getLiveQueue ───────────────────────────────────────────────────────────
@@ -274,7 +432,7 @@ describe('FifoQueueService', () => {
 
       expect(mockPrisma.queueEntry.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ status: QueueStatus.PENDING }),
+          where: expect.objectContaining({ status: QueueStatus.WAITING }),
           orderBy: [{ checkInTime: 'asc' }, { sequence: 'asc' }],
         }),
       );
