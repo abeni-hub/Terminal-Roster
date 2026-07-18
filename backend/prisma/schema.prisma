@@ -52,11 +52,12 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  terminalAssignments       UserTerminalAssignment[]
-  auditLogs                 AuditLog[]
-  overrides                 OverrideLog[]          @relation("SupervisorOverrides")
-  dispatches                DispatchRecord[]       @relation("DispatcherDispatches")
+  terminalAssignments         UserTerminalAssignment[]
+  auditLogs                   AuditLog[]
+  overrides                   OverrideLog[]                @relation("SupervisorOverrides")
+  dispatches                  DispatchRecord[]             @relation("DispatcherDispatches")
   rosterDispatcherAssignments RosterDispatcherAssignment[] @relation("DispatcherRosterAssignments")
+  pricingRule                 PricingRule?                 @relation("DispatcherPricing")
 
   @@map("users")
 }
@@ -73,12 +74,16 @@ model Terminal {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  routes                     TerminalRoute[]
-  userAssignments            UserTerminalAssignment[]
-  queues                     QueueEntry[]
-  dispatches                 DispatchRecord[]
-  devices                    DeviceBinding[]
+  routes                      TerminalRoute[]
+  routesAsSource              Route[]                      @relation("RouteSourceTerminal")
+  routesAsDestination         Route[]                      @relation("RouteDestinationTerminal")
+  userAssignments             UserTerminalAssignment[]
+  queues                      QueueEntry[]
+  dispatches                  DispatchRecord[]
+  devices                     DeviceBinding[]
   rosterDispatcherAssignments RosterDispatcherAssignment[] @relation("TerminalRosterAssignments")
+  rosterVehicleAssignments    RosterVehicleAssignment[]    @relation("TerminalVehicleAssignments")
+  groupRotations              VehicleGroupRotation[]
 
   @@map("terminals")
 }
@@ -100,20 +105,23 @@ model UserTerminalAssignment {
 // ROUTES
 // ─────────────────────────────────────────────────────────────────────────────
 model Route {
-  id           String   @id @default(uuid())
-  code         String   @unique
-  origin       String
-  destination  String
-  baseFareETB  Decimal  @db.Decimal(10, 2) @map("base_fare_etb")
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id                    String   @id @default(uuid())
+  code                  String   @unique
+  sourceTerminalId      String   @map("source_terminal_id")
+  destinationTerminalId String   @map("destination_terminal_id")
+  baseFareETB           Decimal  @map("base_fare_etb") @db.Decimal(10, 2)
+  isActive              Boolean  @default(true) @map("is_active")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
 
-  terminals                  TerminalRoute[]
-  dispatches                 DispatchRecord[]
-  queues                     QueueEntry[]
+  sourceTerminal              Terminal                     @relation("RouteSourceTerminal", fields: [sourceTerminalId], references: [id])
+  destinationTerminal         Terminal                     @relation("RouteDestinationTerminal", fields: [destinationTerminalId], references: [id])
+  terminals                   TerminalRoute[]
+  dispatches                  DispatchRecord[]
+  queues                      QueueEntry[]
   rosterDispatcherAssignments RosterDispatcherAssignment[] @relation("RouteDispatcherAssignments")
-  rosterVehicleAssignments   RosterVehicleAssignment[]    @relation("RouteVehicleAssignments")
+  rosterVehicleAssignments    RosterVehicleAssignment[]    @relation("RouteVehicleAssignments")
+  groupRotations              VehicleGroupRotation[]
 
   @@map("routes")
 }
@@ -148,6 +156,10 @@ model Vehicle {
   dispatches               DispatchRecord[]
   violations               ViolationRecord[]
   rosterVehicleAssignments RosterVehicleAssignment[] @relation("VehicleRosterAssignments")
+  plateHistories           VehiclePlateHistory[]     @relation("VehiclePlateHistories")
+
+  groupId                  String?                   @map("group_id")
+  group                    VehicleGroup?             @relation(fields: [groupId], references: [id], onDelete: SetNull)
 
   @@map("vehicles")
 }
@@ -158,16 +170,18 @@ model Vehicle {
 
 model Roster {
   id         String   @id @default(uuid())
-  name       String                         // e.g. "Week 24 – Jun 10–16 2026"
+  name       String // e.g. "Week 24 – Jun 10–16 2026"
   weekNumber Int      @map("week_number")
   startDate  DateTime @map("start_date")
   endDate    DateTime @map("end_date")
-  isActive   Boolean  @default(false) @map("is_active")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  isActive    Boolean  @default(false) @map("is_active")
+  isFinalized Boolean  @default(false) @map("is_finalized")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   dispatcherAssignments RosterDispatcherAssignment[]
   vehicleAssignments    RosterVehicleAssignment[]
+  groupRotations        VehicleGroupRotation[]
 
   @@map("rosters")
 }
@@ -181,28 +195,30 @@ model RosterDispatcherAssignment {
   terminalId   String   @map("terminal_id")
   createdAt    DateTime @default(now()) @map("created_at")
 
-  roster     Roster   @relation(fields: [rosterId],     references: [id], onDelete: Cascade)
+  roster     Roster   @relation(fields: [rosterId], references: [id], onDelete: Cascade)
   dispatcher User     @relation("DispatcherRosterAssignments", fields: [dispatcherId], references: [id], onDelete: Cascade)
-  route      Route    @relation("RouteDispatcherAssignments",  fields: [routeId],     references: [id], onDelete: Cascade)
-  terminal   Terminal @relation("TerminalRosterAssignments",   fields: [terminalId],  references: [id], onDelete: Cascade)
+  route      Route    @relation("RouteDispatcherAssignments", fields: [routeId], references: [id], onDelete: Cascade)
+  terminal   Terminal @relation("TerminalRosterAssignments", fields: [terminalId], references: [id], onDelete: Cascade)
 
-  @@unique([rosterId, dispatcherId])
+  @@unique([rosterId, dispatcherId, routeId, terminalId])
   @@map("roster_dispatcher_assignments")
 }
 
 // One vehicle → one route within a roster
 model RosterVehicleAssignment {
-  id        String   @id @default(uuid())
-  rosterId  String   @map("roster_id")
-  vehicleId String   @map("vehicle_id")
-  routeId   String   @map("route_id")
-  createdAt DateTime @default(now()) @map("created_at")
+  id         String   @id @default(uuid())
+  rosterId   String   @map("roster_id")
+  vehicleId  String   @map("vehicle_id")
+  routeId    String   @map("route_id")
+  terminalId String   @map("terminal_id")
+  createdAt  DateTime @default(now()) @map("created_at")
 
-  roster  Roster  @relation(fields: [rosterId],  references: [id], onDelete: Cascade)
-  vehicle Vehicle @relation("VehicleRosterAssignments", fields: [vehicleId], references: [id], onDelete: Cascade)
-  route   Route   @relation("RouteVehicleAssignments",  fields: [routeId],  references: [id], onDelete: Cascade)
+  roster   Roster   @relation(fields: [rosterId], references: [id], onDelete: Cascade)
+  vehicle  Vehicle  @relation("VehicleRosterAssignments", fields: [vehicleId], references: [id], onDelete: Cascade)
+  route    Route    @relation("RouteVehicleAssignments", fields: [routeId], references: [id], onDelete: Cascade)
+  terminal Terminal @relation("TerminalVehicleAssignments", fields: [terminalId], references: [id], onDelete: Cascade)
 
-  @@unique([rosterId, vehicleId])
+  @@unique([rosterId, vehicleId, routeId, terminalId])
   @@map("roster_vehicle_assignments")
 }
 
@@ -210,19 +226,19 @@ model RosterVehicleAssignment {
 // QUEUE
 // ─────────────────────────────────────────────────────────────────────────────
 model QueueEntry {
-  id          String      @id @default(uuid())
-  terminalId  String      @map("terminal_id")
-  routeId     String      @map("route_id")
-  vehicleId   String      @map("vehicle_id")
-  checkInTime DateTime    @default(now()) @map("check_in_time")
-  checkOutTime DateTime?  @map("check_out_time")
-  status      QueueStatus @default(WAITING)
-  sequence    Int
-  syncId      String?     @unique @map("sync_id")
+  id           String      @id @default(uuid())
+  terminalId   String      @map("terminal_id")
+  routeId      String      @map("route_id")
+  vehicleId    String      @map("vehicle_id")
+  checkInTime  DateTime    @default(now()) @map("check_in_time")
+  checkOutTime DateTime?   @map("check_out_time")
+  status       QueueStatus @default(WAITING)
+  sequence     Int
+  syncId       String?     @unique @map("sync_id")
 
-  terminal Terminal @relation(fields: [terminalId], references: [id])
-  route    Route    @relation(fields: [routeId], references: [id])
-  vehicle  Vehicle  @relation(fields: [vehicleId], references: [id])
+  terminal Terminal     @relation(fields: [terminalId], references: [id])
+  route    Route        @relation(fields: [routeId], references: [id])
+  vehicle  Vehicle      @relation(fields: [vehicleId], references: [id])
   override OverrideLog?
 
   @@index([terminalId, routeId, status, checkInTime])
@@ -241,9 +257,9 @@ model DispatchRecord {
   dispatcherId        String   @map("dispatcher_id")
   checkInTime         DateTime @map("check_in_time")
   dispatchTime        DateTime @default(now()) @map("dispatch_time")
-  fareChargedETB      Decimal  @db.Decimal(10, 2) @map("fare_charged_etb")
-  municipalCommission Decimal  @db.Decimal(10, 2) @default(10.00) @map("municipal_commission")
-  platformCommission  Decimal  @db.Decimal(10, 2) @default(1.00) @map("platform_commission")
+  fareChargedETB      Decimal  @map("fare_charged_etb") @db.Decimal(10, 2)
+  municipalCommission Decimal  @default(10.00) @map("municipal_commission") @db.Decimal(10, 2)
+  platformCommission  Decimal  @default(1.00) @map("platform_commission") @db.Decimal(10, 2)
   isReconciled        Boolean  @default(false) @map("is_reconciled")
   syncId              String?  @unique @map("sync_id")
 
@@ -324,8 +340,8 @@ model ReconciliationReport {
   endDate            DateTime @map("end_date")
   terminalId         String?  @map("terminal_id")
   totalDispatches    Int      @map("total_dispatches")
-  totalMunicipalComm Decimal  @db.Decimal(12, 2) @map("total_municipal_comm")
-  totalPlatformComm  Decimal  @db.Decimal(12, 2) @map("total_platform_comm")
+  totalMunicipalComm Decimal  @map("total_municipal_comm") @db.Decimal(12, 2)
+  totalPlatformComm  Decimal  @map("total_platform_comm") @db.Decimal(12, 2)
   status             String   @default("PENDING")
   generatedAt        DateTime @default(now()) @map("generated_at")
 
@@ -342,3 +358,64 @@ model Settings {
 
   @@map("settings")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW MODELS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model VehiclePlateHistory {
+  id        String   @id @default(uuid())
+  vehicleId String   @map("vehicle_id")
+  oldPlate  String   @map("old_plate")
+  newPlate  String   @map("new_plate")
+  changedAt DateTime @default(now()) @map("changed_at")
+
+  vehicle Vehicle @relation("VehiclePlateHistories", fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@map("vehicle_plate_history")
+}
+
+model PricingRule {
+  id             String   @id @default(uuid())
+  dispatcherId   String   @unique @map("dispatcher_id")
+  fareMultiplier Decimal  @default(1.0) @map("fare_multiplier") @db.Decimal(5, 2)
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  dispatcher User @relation("DispatcherPricing", fields: [dispatcherId], references: [id], onDelete: Cascade)
+
+  @@map("pricing_rules")
+}
+
+model VehicleGroup {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  vehicles       Vehicle[]
+  groupRotations VehicleGroupRotation[]
+
+  @@map("vehicle_groups")
+}
+
+// Tracks which VehicleGroup was assigned to which Route in each Roster week.
+// One record per group per roster — enables per-terminal round-robin rotation.
+model VehicleGroupRotation {
+  id             String   @id @default(uuid())
+  rosterId       String   @map("roster_id")
+  vehicleGroupId String   @map("vehicle_group_id")
+  routeId        String   @map("route_id")
+  terminalId     String   @map("terminal_id")
+  rotationIndex  Int      @map("rotation_index") // global rotation offset used for this roster+terminal
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  roster       Roster       @relation(fields: [rosterId], references: [id], onDelete: Cascade)
+  vehicleGroup VehicleGroup @relation(fields: [vehicleGroupId], references: [id], onDelete: Cascade)
+  route        Route        @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  terminal     Terminal     @relation(fields: [terminalId], references: [id], onDelete: Cascade)
+
+  @@unique([rosterId, vehicleGroupId, terminalId])
+  @@map("vehicle_group_rotations")
+}
+

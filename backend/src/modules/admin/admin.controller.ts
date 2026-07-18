@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, UseGuards, BadRequestException } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -29,9 +29,9 @@ export class AdminController {
   // ── USER CRUD (System Admin only) ──────────────────────────────────────────
   @Get('users')
   @Roles(RoleName.SYSTEM_ADMIN)
-  @ApiOperation({ summary: 'List all system users' })
+  @ApiOperation({ summary: 'List all system users with their terminal assignments' })
   async getUsers() {
-    return this.adminService.getUsers();
+    return this.adminService.getUsersWithTerminals();
   }
 
   @Post('users')
@@ -57,6 +57,25 @@ export class AdminController {
     return this.adminService.deleteUser(id);
   }
 
+  // ── TERMINAL ASSIGNMENT (Dispatcher 1:1) ───────────────────────────────────
+  @Get('users/:id/terminal')
+  @Roles(RoleName.SYSTEM_ADMIN)
+  @ApiOperation({ summary: "Get a dispatcher's assigned terminal" })
+  async getDispatcherTerminal(@Param('id') id: string) {
+    return this.adminService.getDispatcherTerminal(id);
+  }
+
+  @Post('users/:id/assign-terminal')
+  @Roles(RoleName.SYSTEM_ADMIN)
+  @ApiOperation({ summary: 'Assign a dispatcher to a terminal (1:1 — replaces any existing assignment)' })
+  @ApiBody({ schema: { properties: { terminalId: { type: 'string', nullable: true } } } })
+  async assignDispatcherTerminal(
+    @Param('id') id: string,
+    @Body() body: { terminalId: string | null },
+  ) {
+    return this.adminService.assignDispatcherTerminal(id, body.terminalId ?? null);
+  }
+
   // ── SETTINGS CRUD (System Admin only) ──────────────────────────────────────
   @Get('settings')
   @Roles(RoleName.SYSTEM_ADMIN)
@@ -79,5 +98,33 @@ export class AdminController {
   @ApiOperation({ summary: 'Get system-wide audit trail logs' })
   async getAuditLogs() {
     return this.adminService.getAuditLogs();
+  }
+
+  // ── DASHBOARD ──────────────────────────────────────────────────────────────
+  @Get('dashboard/transport')
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
+  @ApiOperation({ summary: 'Get transport dashboard metrics' })
+  async getTransportDashboardMetrics() {
+    return this.adminService.getTransportDashboardMetrics();
+  }
+
+  // ── PRICING RULES ──────────────────────────────────────────────────────────
+  @Get('pricing-rules')
+  @Roles(RoleName.SYSTEM_ADMIN)
+  @ApiOperation({ summary: 'Get all dynamic pricing rules' })
+  async getPricingRules() {
+    return this.adminService.getPricingRules();
+  }
+
+  @Post('pricing-rules')
+  @Roles(RoleName.SYSTEM_ADMIN)
+  @ApiOperation({ summary: 'Create or update a dynamic pricing rule for a dispatcher' })
+  async upsertPricingRule(
+    @Body() body: { dispatcherId: string; fareMultiplier: number }
+  ) {
+    if (!body.dispatcherId || body.fareMultiplier == null) {
+      throw new BadRequestException('dispatcherId and fareMultiplier are required');
+    }
+    return this.adminService.upsertPricingRule(body.dispatcherId, body.fareMultiplier);
   }
 }

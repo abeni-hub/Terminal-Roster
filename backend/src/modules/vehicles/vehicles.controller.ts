@@ -1,10 +1,10 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards } from '@nestjs/common';
 import { VehiclesService } from './vehicles.service';
-import { CreateVehicleDto, UpdateVehicleDto } from './dto/vehicle.dto';
+import { CreateVehicleDto, UpdateVehicleDto, BatchImportVehiclesDto } from './dto/vehicle.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { RoleName } from '@prisma/client';
+import { RoleName, ViolationType } from '@prisma/client';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 
 @ApiTags('Vehicles')
@@ -21,6 +21,22 @@ export class VehiclesController {
     return this.vehiclesService.create(createVehicleDto);
   }
 
+  @Post('with-violation')
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
+  @ApiOperation({ summary: 'Register a vehicle and flag a violation simultaneously' })
+  async registerWithViolation(
+    @Body() body: { vehicle: CreateVehicleDto, violationDetails: string, violationType: ViolationType, severityScore?: number }
+  ) {
+    return this.vehiclesService.registerVehicleWithViolation(body);
+  }
+
+  @Post('batch-import')
+  @Roles(RoleName.SYSTEM_ADMIN, RoleName.MUNICIPAL_PLANNER)
+  @ApiOperation({ summary: 'Batch import vehicles from CSV data or JSON array' })
+  async batchImport(@Body() batchImportDto: BatchImportVehiclesDto) {
+    return this.vehiclesService.batchImport(batchImportDto);
+  }
+
   @Get()
   @ApiOperation({ summary: 'List all vehicles' })
   async findAll() {
@@ -31,6 +47,12 @@ export class VehiclesController {
   @ApiOperation({ summary: 'Get vehicle by database ID' })
   async findOne(@Param('id') id: string) {
     return this.vehiclesService.findOne(id);
+  }
+
+  @Get(':id/plate-history')
+  @ApiOperation({ summary: 'Get vehicle plate history' })
+  async getPlateHistory(@Param('id') id: string) {
+    return this.vehiclesService.getPlateHistory(id);
   }
 
   @Get('plate/:plateNumber')

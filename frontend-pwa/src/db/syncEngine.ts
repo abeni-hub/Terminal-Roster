@@ -3,7 +3,16 @@ import { db } from './schema';
 export class SyncEngine {
   private static isSyncing = false;
 
-  static async triggerSync(deviceUuid: string, apiBaseUrl: string, token: string): Promise<{ success: boolean; syncedCount: number }> {
+  static async triggerSync(
+    deviceUuid: string,
+    apiBaseUrl: string,
+    token: string
+  ): Promise<{
+    success: boolean;
+    syncedCount: number;
+    rejections?: { syncId: string; error: string }[];
+    failures?: { syncId: string; error: string }[];
+  }> {
     if (this.isSyncing) {
       return { success: false, syncedCount: 0 };
     }
@@ -123,12 +132,14 @@ export class SyncEngine {
       this.isSyncing = false;
       return {
         success: true,
-        syncedCount: succeededIds.length
+        syncedCount: succeededIds.length,
+        rejections: rejectedRecords,   // permanent server rejections (bad data, roster mismatch, etc.)
+        failures: failedRecords,       // transient failures (will be retried)
       };
     } catch (error) {
       console.error('PWA Sync Engine Error:', error);
       this.isSyncing = false;
-      return { success: false, syncedCount: 0 };
+      return { success: false, syncedCount: 0, rejections: [], failures: [] };
     }
   }
 

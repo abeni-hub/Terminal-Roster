@@ -84,11 +84,78 @@ export class AdminService {
     if (!user) {
       throw new NotFoundException('User not found');
     }
-    // Perform a soft delete / disable to preserve reference integrity
     return this.prisma.user.update({
       where: { id },
       data: { isActive: false },
     });
+  }
+
+  // ── TERMINAL ASSIGNMENT (1:1 for dispatchers) ──────────────────────────────
+  async assignDispatcherTerminal(userId: string, terminalId: string | null) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { terminalAssignments: true },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    if (user.roleName !== 'DISPATCHER') {
+      throw new BadRequestException('Terminal assignment is only for Dispatcher accounts.');
+    }
+
+    // Remove all existing terminal assignments for this dispatcher (1:1 enforcement)
+    await this.prisma.userTerminalAssignment.deleteMany({
+      where: { userId },
+    });
+
+    if (!terminalId) {
+      return { success: true, message: 'Terminal assignment cleared.' };
+    }
+
+    const terminal = await this.prisma.terminal.findUnique({ where: { id: terminalId } });
+    if (!terminal) {
+      throw new NotFoundException('Terminal not found');
+    }
+
+    const assignment = await this.prisma.userTerminalAssignment.create({
+      data: { userId, terminalId },
+      include: { terminal: { select: { id: true, name: true, code: true } } },
+    });
+
+    return { success: true, assignment };
+  }
+
+  async getDispatcherTerminal(userId: string) {
+    const assignment = await this.prisma.userTerminalAssignment.findFirst({
+      where: { userId },
+      include: { terminal: { select: { id: true, name: true, code: true } } },
+    });
+    return assignment ? assignment.terminal : null;
+  }
+
+  async getUsersWithTerminals() {
+    const users = await this.prisma.user.findMany({
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        roleName: true,
+        isActive: true,
+        createdAt: true,
+        terminalAssignments: {
+          include: {
+            terminal: { select: { id: true, name: true, code: true } },
+          },
+          take: 1, // dispatchers have max 1
+        },
+      },
+      orderBy: { username: 'asc' },
+    });
+
+    return users.map((u) => ({
+      ...u,
+      assignedTerminal: u.terminalAssignments[0]?.terminal ?? null,
+    }));
   }
 
   // ── SETTINGS MANAGEMENT ────────────────────────────────────────────────────
@@ -122,6 +189,51 @@ export class AdminService {
         },
       },
       orderBy: { timestamp: 'desc' },
+    });
+  }
+
+  // ── DASHBOARD METRICS ──────────────────────────────────────────────────────
+  async getTransportDashboardMetrics() {
+    const totalAvailableVehicles = await this.prisma.vehicle.count({
+      where: { status: 'ACTIVE' },
+    });
+
+    const activeVehicles = await this.prisma.queueEntry.count({
+      where: { status: { in: ['WAITING', 'DISPATCHED'] } },
+    });
+
+    const vehiclesWithViolations = await this.prisma.violationRecord.groupBy({
+      by: ['vehicleId'],
+      where: { resolved: false },
+    });
+
+    return {
+      totalAvailableVehicles,
+      activeVehicles,
+      vehiclesWithViolations: vehiclesWithViolations.length,
+    };
+  }
+
+  // ── PRICING RULES ──────────────────────────────────────────────────────────
+  async getPricingRules() {
+    return this.prisma.pricingRule.findMany({
+      include: {
+        dispatcher: {
+          select: { username: true, email: true }
+        }
+      }
+    });
+  }
+
+  async upsertPricingRule(dispatcherId: string, fareMultiplier: number) {
+    const user = await this.prisma.user.findUnique({ where: { id: dispatcherId } });
+    if (!user || user.roleName !== RoleName.DISPATCHER) {
+      throw new BadRequestException('Dispatcher not found or user is not a dispatcher');
+    }
+    return this.prisma.pricingRule.upsert({
+      where: { dispatcherId },
+      update: { fareMultiplier },
+      create: { dispatcherId, fareMultiplier },
     });
   }
 }

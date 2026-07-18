@@ -22,9 +22,19 @@ export class CreateVehicleDto {
   @IsOptional()
   @IsNumber()
   capacity?: number;
+
+  @ApiProperty({ enum: VehicleStatus, example: VehicleStatus.ACTIVE, required: false })
+  @IsOptional()
+  @IsEnum(VehicleStatus)
+  status?: VehicleStatus;
 }
 
 export class UpdateVehicleDto {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  plateNumber?: string;
+
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
@@ -44,4 +54,15 @@ export class UpdateVehicleDto {
   @IsOptional()
   @IsEnum(VehicleStatus)
   status?: VehicleStatus;
+}
+
+export class BatchImportVehiclesDto {
+  @ApiProperty({ example: 'plate_number,owner_name,owner_phone,capacity,status\nAA-2-B44910,Bekele Alemu,+251911000001,12,ACTIVE', required: false })
+  @IsOptional()
+  @IsString()
+  csvData?: string;
+
+  @ApiProperty({ type: [CreateVehicleDto], required: false })
+  @IsOptional()
+  vehicles?: CreateVehicleDto[];
 }

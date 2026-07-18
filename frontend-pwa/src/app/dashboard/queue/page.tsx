@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { db, LocalQueueEntry } from '../../../db/schema';
 import { SyncEngine } from '../../../db/syncEngine';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
+const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000').replace(/\/$/, '');
 
 interface AuthUser {
   id: string;
@@ -14,42 +14,162 @@ interface AuthUser {
 }
 
 export default function QueuePage() {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [pendingQueue, setPendingQueue] = useState<LocalQueueEntry[]>([]);
-  const [isOnline, setIsOnline] = useState(true);
+  const [user] = useState<AuthUser | null>(() => {
+    if (typeof window === 'undefined') return null;
+
+    const stored = localStorage.getItem('aatdrs_user');
+    if (!stored) return null;
+
+    try {
+      return JSON.parse(stored) as AuthUser;
+    } catch {
+      return null;
+    }
+  });
+
+  interface EnrichedQueueEntry extends LocalQueueEntry {
+    hasViolation?: boolean;
+    violationDetails?: string;
+  }
+
+  const [pendingQueue, setPendingQueue] = useState<EnrichedQueueEntry[]>([]);
   // Dispatcher roster assignment
   const [assignedRouteCode, setAssignedRouteCode] = useState<string | null>(null);
   const [assignedTerminalName, setAssignedTerminalName] = useState<string | null>(null);
   const [assignedRouteName, setAssignedRouteName] = useState<string | null>(null);
   const [assignedTerminalId, setAssignedTerminalId] = useState<string | null>(null);
 
+  interface DispatcherAssignment {
+    routeId: string;
+    terminalId: string;
+    routeCode: string;
+    routeLabel: string;
+    terminalName: string;
+  }
+
+  interface QueueLiveItem {
+    id: string;
+    terminalId: string;
+    routeId: string;
+    checkInTime: string;
+    sequence: number;
+    syncId?: string;
+    vehicle: {
+      plateNumber: string;
+      violations?: { details: string }[];
+    };
+  }
+
+  interface SyncQueueCheckinAction {
+    id?: number;
+    action: 'CHECKIN' | 'DISPATCH' | 'OVERRIDE' | 'VIOLATION';
+    payload: {
+      syncId: string;
+      terminalId: string;
+      routeId: string;
+      plateNumber: string;
+    };
+    timestamp: number;
+    retryCount: number;
+  }
+
+  const assignedRosterAssignmentsRef = useRef<DispatcherAssignment[]>([]);
+  const routeIdRef = useRef<string | null>(null);
+  const terminalIdRef = useRef<string | null>(null);
+
   // Override Modal state
   const [showOverrideModal, setShowOverrideModal] = useState(false);
-  const [selectedEntry, setSelectedEntry] = useState<{ id: string; vehicleId: string; routeId: string } | null>(null);
+  const [selectedEntry, setSelectedEntry] = useState<{ id: string; vehicleId: string; routeId: string; terminalId: string } | null>(null);
+  const [expandedViolationEntryId, setExpandedViolationEntryId] = useState<string | null>(null);
   const [supervisorUsername, setSupervisorUsername] = useState('');
   const [supervisorPin, setSupervisorPin] = useState('');
   const [overrideReason, setOverrideReason] = useState('Driver absent / route-hop manual skip');
   const [modalError, setModalError] = useState('');
   const [submittingOverride, setSubmittingOverride] = useState(false);
-  const routeCodeRef = useRef<string | null>(null);
-  const terminalIdRef = useRef<string | null>(null);
   const initializedRef = useRef(false);
 
-  const loadLocalData = useCallback(async (routeFilter?: string, terminalIdOverride?: string) => {
+  const loadLocalData = useCallback(async (routeFilter?: string, terminalIdOverride?: string, rosterAssignments?: DispatcherAssignment[]) => {
     const token = localStorage.getItem('aatdrs_token');
-    const effectiveTerminalId = terminalIdOverride ?? terminalIdRef.current ?? assignedTerminalId;
     const storedUser = localStorage.getItem('aatdrs_user');
     const parsedUser = storedUser ? JSON.parse(storedUser) : null;
     const isDispatcher = parsedUser?.roleName === 'DISPATCHER';
+    const activeAssignments = rosterAssignments ?? assignedRosterAssignmentsRef.current;
+    const assignmentPairs = isDispatcher
+      ? activeAssignments.map((assignment) => ({ routeId: assignment.routeId, terminalId: assignment.terminalId }))
+      : [];
+    const effectiveTerminalId = terminalIdOverride ?? assignedTerminalId;
 
-    if (navigator.onLine && token && isDispatcher && effectiveTerminalId && routeFilter) {
+    if (navigator.onLine && token && isDispatcher && assignmentPairs.length > 0) {
       try {
-        const res = await fetch(`${API_URL}/queue/live/${effectiveTerminalId}/${routeFilter}`, {
-          headers: { Authorization: `Bearer ${token}` }
+        const liveResponses = await Promise.all(activeAssignments.map(async (assignment) => {
+          if (!assignment.terminalId || !assignment.routeId) {
+            console.warn('Skipping live queue request for incomplete dispatcher assignment:', assignment);
+            return [] as QueueLiveItem[];
+          }
+
+          const url = `${API_URL}/queue/live/${encodeURIComponent(assignment.terminalId)}/${encodeURIComponent(assignment.routeId)}`;
+          const res = await fetch(url, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) {
+            console.error('Live queue fetch failed for assignment:', { url, status: res.status, statusText: res.statusText });
+            return [] as QueueLiveItem[];
+          }
+          return res.json() as Promise<QueueLiveItem[]>;
+        }));
+
+        const rawLive = liveResponses.flat();
+        const serverEntries: EnrichedQueueEntry[] = rawLive.map((item) => ({
+          id: item.id,
+          terminalId: item.terminalId,
+          routeId: item.routeId,
+          vehicleId: item.vehicle.plateNumber,
+          checkInTime: new Date(item.checkInTime).getTime(),
+          status: 'PENDING',
+          sequence: item.sequence,
+          syncId: item.syncId || '',
+          hasViolation: Boolean(item.vehicle?.violations?.length),
+          violationDetails: item.vehicle?.violations?.[0]?.details || '',
+        }));
+
+        const outbox = await db.syncQueue.where('action').equals('CHECKIN').toArray() as SyncQueueCheckinAction[];
+        const unsyncedEntries: LocalQueueEntry[] = outbox.map((action) => ({
+          id: action.payload.syncId,
+          terminalId: action.payload.terminalId,
+          routeId: action.payload.routeId,
+          vehicleId: action.payload.plateNumber,
+          checkInTime: action.timestamp,
+          status: 'PENDING',
+          sequence: 999,
+          syncId: action.payload.syncId,
+        }));
+
+        const combined: LocalQueueEntry[] = [...serverEntries];
+        for (const unsynced of unsyncedEntries) {
+          if (!combined.some((x) => x.syncId === unsynced.syncId)) {
+            combined.push(unsynced);
+          }
+        }
+
+        const localToKeep = await db.queue.toArray();
+        const filteredKeep = localToKeep.filter((q) =>
+          !assignmentPairs.some((assignment) => assignment.terminalId === q.terminalId && assignment.routeId === q.routeId),
+        );
+
+        await db.queue.clear();
+        await db.queue.bulkPut([...filteredKeep, ...combined]);
+      } catch (err) {
+        console.error('Failed to fetch live queue from server:', { error: err });
+      }
+    } else if (navigator.onLine && token && effectiveTerminalId && routeFilter) {
+      try {
+        const url = `${API_URL}/queue/live/${encodeURIComponent(effectiveTerminalId)}/${encodeURIComponent(routeFilter)}`;
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
         });
         if (res.ok) {
-          const rawLive = await res.json();
-          const serverEntries = rawLive.map((item: any) => ({
+          const rawLive = await res.json() as QueueLiveItem[];
+          const serverEntries: EnrichedQueueEntry[] = rawLive.map((item) => ({
             id: item.id,
             terminalId: item.terminalId,
             routeId: item.routeId,
@@ -58,11 +178,12 @@ export default function QueuePage() {
             status: 'PENDING',
             sequence: item.sequence,
             syncId: item.syncId || '',
+            hasViolation: Boolean(item.vehicle?.violations?.length),
+            violationDetails: item.vehicle?.violations?.[0]?.details || '',
           }));
 
-          // Fetch unsynced local check-ins from outbox
-          const outbox = await db.syncQueue.where('action').equals('CHECKIN').toArray();
-          const unsyncedEntries = outbox.map((action: any) => ({
+          const outbox = await db.syncQueue.where('action').equals('CHECKIN').toArray() as SyncQueueCheckinAction[];
+          const unsyncedEntries: LocalQueueEntry[] = outbox.map((action) => ({
             id: action.payload.syncId,
             terminalId: action.payload.terminalId,
             routeId: action.payload.routeId,
@@ -73,103 +194,103 @@ export default function QueuePage() {
             syncId: action.payload.syncId,
           }));
 
-          const combined = [...serverEntries];
+          const combined: LocalQueueEntry[] = [...serverEntries];
           for (const unsynced of unsyncedEntries) {
-            if (!combined.some(x => x.syncId === unsynced.syncId)) {
+            if (!combined.some((x) => x.syncId === unsynced.syncId)) {
               combined.push(unsynced);
             }
           }
 
-          // Clear local queue entries of this terminal/route and put the combined list
           const localToKeep = await db.queue.toArray();
-          const filteredKeep = localToKeep.filter(q => q.terminalId !== effectiveTerminalId || q.routeId !== routeFilter);
-          
+          const filteredKeep = localToKeep.filter((q) => q.terminalId !== effectiveTerminalId || q.routeId !== routeFilter);
           await db.queue.clear();
           await db.queue.bulkPut([...filteredKeep, ...combined]);
+        } else {
+          console.error('Live queue fetch failed:', { url, status: res.status, statusText: res.statusText });
         }
       } catch (err) {
-        console.error('Failed to fetch live queue from server:', err);
+        console.error('Failed to fetch live queue from server:', { error: err });
       }
     }
 
-    let list = await db.queue.where('status').equals('PENDING').toArray();
+    let list = await db.queue.where('status').equals('PENDING').toArray() as EnrichedQueueEntry[];
     if (routeFilter) {
       list = list.filter((e) => e.routeId === routeFilter);
+    } else if (isDispatcher && assignmentPairs.length > 0) {
+      list = list.filter((e) => assignmentPairs.some((a) => a.routeId === e.routeId && a.terminalId === e.terminalId));
     }
-    list.sort((a, b) => a.checkInTime - b.checkInTime || a.sequence - b.sequence);
-    setPendingQueue(list);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    const localViolations = await db.violations.toArray();
+    const enrichedList = list.map((entry) => {
+      const hasLocalViolation = localViolations.some((v) => v.vehicleId === entry.vehicleId);
+      return {
+        ...entry,
+        hasViolation: entry.hasViolation || hasLocalViolation,
+        violationDetails: entry.violationDetails || (hasLocalViolation ? 'Offline registered violation' : ''),
+      };
+    });
+
+    enrichedList.sort((a, b) => a.checkInTime - b.checkInTime || a.sequence - b.sequence);
+    setPendingQueue(enrichedList);
   }, [assignedTerminalId]);
 
 
   const fetchRosterAssignment = useCallback(async (userObj: AuthUser): Promise<{ routeId: string | null; terminalId: string | null }> => {
     if (userObj.roleName !== 'DISPATCHER') return { routeId: null, terminalId: null };
     const token = localStorage.getItem('aatdrs_token');
+    let routeId: string | null = null;
+    let termId: string | null = null;
+
     try {
-      const [schedRes, termRes] = await Promise.all([
-        fetch(`${API_URL}/roster/schedules`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${API_URL}/roster/terminals`, { headers: { Authorization: `Bearer ${token}` } }),
-      ]);
-      let routeCode: string | null = null;
-      let routeId: string | null = null;
-      let termId: string | null = null;
-      let termName: string | null = null;
-      let routeName: string | null = null;
-
-      if (schedRes.ok) {
-        const schedules = await schedRes.json();
-        if (schedules.length > 0) {
-          const s = schedules[0];
-          routeCode = s.route.code;
-          routeId = s.route.id;
-          routeName = `${s.route.origin} → ${s.route.destination}`;
-        }
-      }
-      if (termRes.ok) {
-        const terminals = await termRes.json();
-        if (terminals.length > 0) {
-          termName = terminals[0].name;
-          termId = terminals[0].id;
-        }
+      const res = await fetch(`${API_URL}/roster/my-assignments`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        throw new Error('Failed to fetch dispatcher assignments');
       }
 
-      if (routeCode) {
-        setAssignedRouteCode(routeCode);
-        setAssignedRouteName(routeName);
+      const data = await res.json() as { assignments?: Array<{
+        route: { id: string; code: string; origin: string; destination: string };
+        terminal: { id: string; name: string };
+      }> };
+
+      const assignments = Array.isArray(data.assignments) ? data.assignments : [];
+      const mappedAssignments: DispatcherAssignment[] = assignments.map((assignment) => ({
+        routeId: assignment.route.id,
+        terminalId: assignment.terminal.id,
+        routeCode: assignment.route.code,
+        routeLabel: `${assignment.route.code} (${assignment.route.origin} → ${assignment.route.destination})`,
+        terminalName: assignment.terminal.name,
+      }));
+
+      if (mappedAssignments.length > 0) {
+        assignedRosterAssignmentsRef.current = mappedAssignments;
+        setAssignedRouteCode(mappedAssignments[0].routeCode);
+        setAssignedRouteName(
+          mappedAssignments.length === 1
+            ? mappedAssignments[0].routeLabel
+            : mappedAssignments.map((item: DispatcherAssignment) => item.routeLabel).join(', '),
+        );
+        setAssignedTerminalName(mappedAssignments[0].terminalName);
+        setAssignedTerminalId(mappedAssignments[0].terminalId);
+        routeId = mappedAssignments[0].routeId;
+        termId = mappedAssignments[0].terminalId;
       }
-      if (termName) {
-        setAssignedTerminalName(termName);
-        setAssignedTerminalId(termId);
-      }
+
       return { routeId, terminalId: termId };
     } catch {
-      // Offline fallback: load from IndexedDB
       const cachedSchedules = await db.schedules.toArray();
       const cachedTerminals = await db.terminals.toArray();
-      let routeCode: string | null = null;
-      let routeId: string | null = null;
-      let termId: string | null = null;
-      let termName: string | null = null;
-      let routeName: string | null = null;
-
       if (cachedSchedules.length > 0) {
-        const s = cachedSchedules[0];
-        routeCode = s.routeCode;
-        routeId = s.routeId || null;
-        routeName = `${s.origin} → ${s.destination}`;
+        const firstAssigned = cachedSchedules[0];
+        setAssignedRouteCode(firstAssigned.routeCode);
+        setAssignedRouteName(`${firstAssigned.origin} → ${firstAssigned.destination}`);
+        routeId = firstAssigned.routeId || null;
       }
       if (cachedTerminals.length > 0) {
-        termName = cachedTerminals[0].name;
+        setAssignedTerminalName(cachedTerminals[0].name);
+        setAssignedTerminalId(cachedTerminals[0].id);
         termId = cachedTerminals[0].id;
-      }
-
-      if (routeCode) {
-        setAssignedRouteCode(routeCode);
-        setAssignedRouteName(routeName);
-      }
-      if (termName) {
-        setAssignedTerminalName(termName);
-        setAssignedTerminalId(termId);
       }
       return { routeId, terminalId: termId };
     }
@@ -183,35 +304,30 @@ export default function QueuePage() {
     const stored = localStorage.getItem('aatdrs_user');
     let parsedUser: AuthUser | null = null;
     if (stored) {
-      parsedUser = JSON.parse(stored);
-      setUser(parsedUser);
+      try {
+        parsedUser = JSON.parse(stored) as AuthUser;
+      } catch {
+        parsedUser = null;
+      }
     }
 
     const init = async () => {
       if (parsedUser?.roleName === 'DISPATCHER') {
         const { routeId, terminalId } = await fetchRosterAssignment(parsedUser);
-        routeCodeRef.current = routeId;
+        routeIdRef.current = routeId;
         terminalIdRef.current = terminalId;
-        loadLocalData(routeId ?? undefined, terminalId ?? undefined);
+        loadLocalData(undefined, undefined, assignedRosterAssignmentsRef.current);
       } else {
         loadLocalData();
       }
     };
 
     init();
-    setIsOnline(navigator.onLine);
-
-    const updateOnline = () => setIsOnline(navigator.onLine);
-    window.addEventListener('online', updateOnline);
-    window.addEventListener('offline', updateOnline);
-
     const timer = setInterval(() => {
-      loadLocalData(routeCodeRef.current ?? undefined);
+      loadLocalData(undefined, undefined, assignedRosterAssignmentsRef.current);
     }, 3000);
 
     return () => {
-      window.removeEventListener('online', updateOnline);
-      window.removeEventListener('offline', updateOnline);
       clearInterval(timer);
       initializedRef.current = false;
     };
@@ -223,16 +339,15 @@ export default function QueuePage() {
     const token = localStorage.getItem('aatdrs_token');
     if (token) {
       await SyncEngine.triggerSync('device-uuid-12345', API_URL, token);
-      const isDispatcher = user?.roleName === 'DISPATCHER';
-      loadLocalData(isDispatcher ? routeCodeRef.current ?? undefined : undefined);
+      loadLocalData(undefined, undefined, assignedRosterAssignmentsRef.current);
     }
   };
 
-  const handleDispatch = async (entryId: string, vehicleId: string, routeId: string) => {
+  const handleDispatch = async (entryId: string, vehicleId: string, routeId: string, terminalId: string) => {
     const syncId = crypto.randomUUID();
     const now = Date.now();
 
-    let effectiveTerminalId = terminalIdRef.current ?? assignedTerminalId ?? '';
+    let effectiveTerminalId = terminalId || terminalIdRef.current || assignedTerminalId || '';
     if (!effectiveTerminalId) {
       if (user?.roleName === 'DISPATCHER') {
         const cachedTerminals = await db.terminals.toArray();
@@ -264,13 +379,12 @@ export default function QueuePage() {
       retryCount: 0,
     });
 
-    const isDispatcher = user?.roleName === 'DISPATCHER';
-    loadLocalData(isDispatcher ? routeCodeRef.current ?? undefined : undefined);
+    loadLocalData(undefined, undefined, assignedRosterAssignmentsRef.current);
     if (navigator.onLine) triggerSync();
   };
 
   const openOverrideModal = (entry: LocalQueueEntry) => {
-    setSelectedEntry({ id: entry.id, vehicleId: entry.vehicleId, routeId: entry.routeId });
+    setSelectedEntry({ id: entry.id, vehicleId: entry.vehicleId, routeId: entry.routeId, terminalId: entry.terminalId });
     setSupervisorUsername('');
     setSupervisorPin('');
     setModalError('');
@@ -327,10 +441,11 @@ export default function QueuePage() {
       // Skip the vehicle in our local DB
       await db.queue.update(selectedEntry.id, { status: 'SKIPPED' });
       const isDispatcher = user?.roleName === 'DISPATCHER';
-      loadLocalData(isDispatcher ? routeCodeRef.current ?? undefined : undefined);
+      loadLocalData(isDispatcher ? routeIdRef.current ?? undefined : undefined);
       setShowOverrideModal(false);
-    } catch (err: any) {
-      setModalError(err.message || 'Validation failed. Check credentials and retry.');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Validation failed. Check credentials and retry.';
+      setModalError(message);
     } finally {
       setSubmittingOverride(false);
     }
@@ -386,7 +501,29 @@ export default function QueuePage() {
                 {pendingQueue.map((entry, index) => (
                   <tr key={entry.id} className="hover:bg-slate-900/30 transition-colors">
                     <td className="py-3.5 pr-3 font-extrabold text-indigo-400 text-sm">#{index + 1}</td>
-                    <td className="py-3.5 pr-3 font-mono font-bold text-white tracking-wide text-sm">{entry.vehicleId}</td>
+                    <td className="py-3.5 pr-3 font-mono font-bold text-white tracking-wide text-sm">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          {entry.vehicleId}
+                          {entry.hasViolation && (
+                            <button
+                              type="button"
+                              onClick={() => setExpandedViolationEntryId((value) => value === entry.id ? null : entry.id)}
+                              className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-500/10 text-red-400 border border-red-500/20 animate-pulse"
+                              title={entry.violationDetails || 'Active violation'}
+                            >
+                              ⚠ Violation
+                            </button>
+                          )}
+                        </div>
+                        {entry.hasViolation && expandedViolationEntryId === entry.id && (
+                          <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-2.5 py-1.5 text-[10px] text-red-200">
+                            <div className="mb-0.5 font-semibold uppercase tracking-[0.2em] text-red-400">Remark</div>
+                            <div>{entry.violationDetails || 'No remark available for this violation.'}</div>
+                          </div>
+                        )}
+                      </div>
+                    </td>
                     <td className="py-3.5 pr-3">
                       <span className="bg-slate-950 border border-slate-800 px-2 py-0.5 rounded text-indigo-300 font-bold">{entry.routeId}</span>
                     </td>
@@ -406,7 +543,7 @@ export default function QueuePage() {
                       {index === 0 ? (
                         canDispatch ? (
                           <button
-                            onClick={() => handleDispatch(entry.id, entry.vehicleId, entry.routeId)}
+                            onClick={() => handleDispatch(entry.id, entry.vehicleId, entry.routeId, entry.terminalId)}
                             className="bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold py-1.5 px-3.5 rounded-lg transition-all active:scale-[0.98] shadow-lg shadow-emerald-600/10"
                           >
                             Dispatch Vehicle

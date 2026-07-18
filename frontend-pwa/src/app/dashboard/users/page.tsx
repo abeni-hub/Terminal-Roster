@@ -2,7 +2,13 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+
+interface Terminal {
+  id: string;
+  name: string;
+  code: string;
+}
 
 interface User {
   id: string;
@@ -11,10 +17,12 @@ interface User {
   roleName: 'SYSTEM_ADMIN' | 'MUNICIPAL_PLANNER' | 'DISPATCHER';
   isActive: boolean;
   createdAt: string;
+  assignedTerminal?: Terminal | null;
 }
 
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
+  const [terminals, setTerminals] = useState<Terminal[]>([]);
   const [loading, setLoading] = useState(false);
 
   // Form states
@@ -27,14 +35,11 @@ export default function UsersPage() {
 
   const [msg, setMsg] = useState('');
 
-  // Dispatcher Assignment Roster states
-  const [assignments, setAssignments] = useState<any[]>([]);
-  const [terminals, setTerminals] = useState<any[]>([]);
-  const [routes, setRoutes] = useState<any[]>([]);
+  // Terminal Assignment states
   const [assignUser, setAssignUser] = useState<User | null>(null);
   const [selectedTerminalId, setSelectedTerminalId] = useState('');
-  const [selectedRouteId, setSelectedRouteId] = useState('');
   const [assignMsg, setAssignMsg] = useState('');
+  const [assigning, setAssigning] = useState(false);
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -54,37 +59,13 @@ export default function UsersPage() {
     }
   }, []);
 
-  const fetchAssignments = useCallback(async () => {
+  const fetchTerminals = useCallback(async () => {
     const token = localStorage.getItem('aatdrs_token');
     try {
-      const res = await fetch(`${API_URL}/roster/dispatcher-assignments`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(`${API_URL}/roster/terminals`, { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) {
-        const data = await res.json();
-        setAssignments(data);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  }, []);
-
-  const fetchTerminalsAndRoutes = useCallback(async () => {
-    const token = localStorage.getItem('aatdrs_token');
-    try {
-      const [termRes, routeRes] = await Promise.all([
-        fetch(`${API_URL}/terminals`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${API_URL}/routes`, { headers: { Authorization: `Bearer ${token}` } }),
-      ]);
-      if (termRes.ok) {
-        const termData = await termRes.json();
+        const termData = await res.json();
         setTerminals(termData);
-        if (termData.length > 0) setSelectedTerminalId(termData[0].id);
-      }
-      if (routeRes.ok) {
-        const routeData = await routeRes.json();
-        setRoutes(routeData);
-        if (routeData.length > 0) setSelectedRouteId(routeData[0].id);
       }
     } catch (e) {
       console.error(e);
@@ -93,31 +74,30 @@ export default function UsersPage() {
 
   useEffect(() => {
     fetchUsers();
-    fetchAssignments();
-    fetchTerminalsAndRoutes();
-  }, [fetchUsers, fetchAssignments, fetchTerminalsAndRoutes]);
+    fetchTerminals();
+  }, [fetchUsers, fetchTerminals]);
 
-  const handleAssignSubmit = async (e: React.FormEvent) => {
+  const handleAssignTerminalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!assignUser) return;
+    setAssigning(true);
+    setAssignMsg('');
     const token = localStorage.getItem('aatdrs_token');
     try {
-      const res = await fetch(`${API_URL}/roster/assign-dispatcher`, {
+      const res = await fetch(`${API_URL}/admin/users/${assignUser.id}/assign-terminal`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          dispatcherId: assignUser.id,
-          terminalId: selectedTerminalId,
-          routeId: selectedRouteId,
+          terminalId: selectedTerminalId || null,
         }),
       });
       if (res.ok) {
-        setMsg('Dispatcher assigned to terminal/route successfully!');
+        setMsg(`Dispatcher's terminal updated successfully!`);
         setAssignUser(null);
-        fetchAssignments();
+        fetchUsers();
         setTimeout(() => setMsg(''), 4000);
       } else {
         const err = await res.json().catch(() => null);
@@ -125,6 +105,8 @@ export default function UsersPage() {
       }
     } catch (err) {
       setAssignMsg('Network error occurred.');
+    } finally {
+      setAssigning(false);
     }
   };
 
@@ -213,10 +195,11 @@ export default function UsersPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-start">
         {/* Editor Pane */}
-        <div className="lg:col-span-1 bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-md">
-          <h3 className="text-sm font-bold text-white mb-4 uppercase tracking-wider">
+        <div className="xl:col-span-1 bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-md">
+          <h3 className="text-sm font-bold text-white mb-4 uppercase tracking-wider flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-blue-400"></span>
             {editId ? 'Modify User Profile' : 'Create User Account'}
           </h3>
 
@@ -290,7 +273,7 @@ export default function UsersPage() {
             <div className="flex gap-2 pt-2">
               <button
                 type="submit"
-                className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold py-2 rounded-lg transition-all active:scale-[0.98]"
+                className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold py-2 rounded-lg transition-all active:scale-[0.98] shadow-lg shadow-indigo-500/20"
               >
                 {editId ? 'Save Changes' : 'Register Account'}
               </button>
@@ -315,53 +298,75 @@ export default function UsersPage() {
         </div>
 
         {/* List Pane */}
-        <div className="lg:col-span-2 bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-md">
-          <h3 className="text-sm font-bold text-white mb-4 uppercase tracking-wider">Active System Users</h3>
+        <div className="xl:col-span-2 bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-md">
+          <h3 className="text-sm font-bold text-white mb-4 uppercase tracking-wider flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+            Active System Users
+          </h3>
 
           {loading ? (
-            <p className="text-slate-500 text-xs text-center py-10">Fetching users...</p>
+            <div className="flex items-center justify-center py-10">
+              <div className="w-6 h-6 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+            </div>
           ) : users.length === 0 ? (
-            <p className="text-slate-500 text-xs text-center py-10">No users registered.</p>
+            <div className="text-center py-12 border border-dashed border-slate-800 rounded-xl">
+              <p className="text-slate-500 text-xs">No users registered.</p>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="border-b border-slate-800 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  <tr className="border-b border-slate-800 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
                     <th className="pb-3 pr-4">Username</th>
                     <th className="pb-3 pr-4">Email</th>
                     <th className="pb-3 pr-4">Role</th>
+                    <th className="pb-3 pr-4">Assigned Terminal</th>
                     <th className="pb-3 pr-4">Status</th>
                     <th className="pb-3 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 text-slate-300 font-medium">
+                <tbody className="divide-y divide-slate-800/60 text-slate-300">
                   {users.map((u) => (
                     <tr key={u.id} className="hover:bg-slate-900/30 transition-colors">
-                      <td className="py-3.5 pr-4 font-bold text-white text-sm">{u.username}</td>
+                      <td className="py-3.5 pr-4 font-bold text-white text-sm">@{u.username}</td>
                       <td className="py-3.5 pr-4 text-slate-400 font-mono text-[11px]">{u.email}</td>
                       <td className="py-3.5 pr-4">
-                        <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                        <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold border ${
                           u.roleName === 'SYSTEM_ADMIN'
                             ? 'bg-violet-500/10 text-violet-400 border-violet-500/20'
                             : u.roleName === 'MUNICIPAL_PLANNER'
                             ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
                             : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                         }`}>
-                          {u.roleName.replace('_', ' ').toLowerCase()}
+                          {u.roleName.replace('_', ' ')}
                         </span>
                       </td>
                       <td className="py-3.5 pr-4">
+                        {u.roleName === 'DISPATCHER' ? (
+                          u.assignedTerminal ? (
+                            <div>
+                              <span className="text-teal-400 font-semibold">{u.assignedTerminal.name}</span>
+                              <span className="text-slate-500 ml-1 font-mono text-[10px]">({u.assignedTerminal.code})</span>
+                            </div>
+                          ) : (
+                            <span className="text-slate-500 text-[10px] italic">Not assigned</span>
+                          )
+                        ) : (
+                          <span className="text-slate-600 text-[10px]">—</span>
+                        )}
+                      </td>
+                      <td className="py-3.5 pr-4">
                         {u.isActive ? (
-                          <span className="text-emerald-400 flex items-center gap-1">
+                          <span className="text-emerald-400 flex items-center gap-1.5 text-[10px] font-semibold">
                             <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span> Active
                           </span>
                         ) : (
-                          <span className="text-red-400 flex items-center gap-1">
+                          <span className="text-red-400 flex items-center gap-1.5 text-[10px] font-semibold">
                             <span className="w-1.5 h-1.5 bg-red-400 rounded-full"></span> Disabled
                           </span>
                         )}
                       </td>
-                      <td className="py-3.5 text-right space-x-2">
+                      <td className="py-3.5 text-right space-x-1.5">
                         <button
                           onClick={() => handleEdit(u)}
                           className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] py-1 px-2.5 rounded transition-all"
@@ -373,18 +378,17 @@ export default function UsersPage() {
                             onClick={() => {
                               setAssignUser(u);
                               setAssignMsg('');
-                              if (terminals.length > 0) setSelectedTerminalId(terminals[0].id);
-                              if (routes.length > 0) setSelectedRouteId(routes[0].id);
+                              setSelectedTerminalId(u.assignedTerminal?.id || '');
                             }}
-                            className="bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/10 text-[10px] py-1 px-2.5 rounded transition-all font-semibold"
+                            className="bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/20 text-[10px] py-1 px-2.5 rounded transition-all font-semibold"
                           >
-                            Assign Route
+                            Assign Terminal
                           </button>
                         )}
                         {u.isActive && (
                           <button
                             onClick={() => handleDelete(u.id)}
-                            className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/10 text-[10px] py-1 px-2.5 rounded transition-all"
+                            className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-[10px] py-1 px-2.5 rounded transition-all"
                           >
                             Disable
                           </button>
@@ -399,47 +403,14 @@ export default function UsersPage() {
         </div>
       </div>
 
-      {/* Dispatcher Roster Assignments List */}
-      <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-md">
-        <h3 className="text-sm font-bold text-white mb-4 uppercase tracking-wider">Active Roster Dispatcher Assignments</h3>
-        {assignments.length === 0 ? (
-          <p className="text-slate-500 text-xs text-center py-6">No dispatcher assignments configured on the active roster.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="border-b border-slate-800 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                  <th className="pb-3 pr-4">Dispatcher</th>
-                  <th className="pb-3 pr-4">Email</th>
-                  <th className="pb-3 pr-4">Terminal</th>
-                  <th className="pb-3 pr-4">Assigned Route</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60 text-slate-300 font-medium">
-                {assignments.map((as) => (
-                  <tr key={as.id} className="hover:bg-slate-900/30 transition-colors">
-                    <td className="py-3 pr-4 font-bold text-white">{as.dispatcher.username}</td>
-                    <td className="py-3 pr-4 text-slate-400 font-mono text-[11px]">{as.dispatcher.email}</td>
-                    <td className="py-3 pr-4 text-slate-200">{as.terminal.name} ({as.terminal.code})</td>
-                    <td className="py-3 pr-4">
-                      <span className="text-teal-400 font-bold font-mono">{as.route.code}</span>
-                      <span className="text-slate-500 ml-1 text-[10px]">({as.route.origin} → {as.route.destination})</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* ── Dispatcher Assignment Modal ── */}
+      {/* ── Terminal Assignment Modal ── */}
       {assignUser && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative">
-            <h3 className="text-base font-bold text-white mb-2">Assign Dispatcher Route</h3>
-            <p className="text-xs text-slate-400 mb-5">
-              Assign dispatcher <span className="text-indigo-400 font-bold">@{assignUser.username}</span> to a terminal and route on the active weekly roster.
+          <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative">
+            <h3 className="text-base font-bold text-white mb-2">Assign Dispatcher Terminal</h3>
+            <p className="text-[10px] text-slate-400 mb-5 leading-relaxed">
+              Set the home terminal for dispatcher <span className="text-indigo-400 font-bold">@{assignUser.username}</span>.
+              A dispatcher can only be assigned to one terminal at a time.
             </p>
 
             {assignMsg && (
@@ -448,17 +419,18 @@ export default function UsersPage() {
               </div>
             )}
 
-            <form onSubmit={handleAssignSubmit} className="space-y-4">
+            <form onSubmit={handleAssignTerminalSubmit} className="space-y-4">
               <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Select Terminal</label>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Terminal</label>
                 {terminals.length === 0 ? (
-                  <p className="text-xs text-amber-400">No active terminals found. Please create one first.</p>
+                  <p className="text-[10px] text-amber-400">No active terminals found.</p>
                 ) : (
                   <select
                     value={selectedTerminalId}
                     onChange={(e) => setSelectedTerminalId(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-lg text-xs px-3.5 py-2.5 focus:outline-none focus:border-indigo-500"
                   >
+                    <option value="">— Clear terminal assignment —</option>
                     {terminals.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.name} ({t.code})
@@ -468,39 +440,20 @@ export default function UsersPage() {
                 )}
               </div>
 
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Select Route</label>
-                {routes.length === 0 ? (
-                  <p className="text-xs text-amber-400">No active routes found. Please create one first.</p>
-                ) : (
-                  <select
-                    value={selectedRouteId}
-                    onChange={(e) => setSelectedRouteId(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-lg text-xs px-3.5 py-2.5 focus:outline-none focus:border-indigo-500"
-                  >
-                    {routes.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.code} ({r.origin} → {r.destination})
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-2">
+              <div className="flex items-center justify-end gap-2 pt-3">
                 <button
                   type="button"
                   onClick={() => setAssignUser(null)}
-                  className="bg-slate-800 hover:bg-slate-755 text-slate-300 text-xs py-2 px-4 rounded-lg transition-all"
+                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold py-2 px-4 rounded-xl transition-all"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={terminals.length === 0 || routes.length === 0}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold py-2 px-4 rounded-lg transition-all disabled:opacity-40"
+                  disabled={assigning}
+                  className="bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold py-2 px-4 rounded-xl transition-all disabled:opacity-40 shadow-lg shadow-teal-500/20"
                 >
-                  Save Assignment
+                  {assigning ? 'Saving...' : 'Save Assignment'}
                 </button>
               </div>
             </form>

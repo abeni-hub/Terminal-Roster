@@ -5,7 +5,7 @@ CREATE TYPE "RoleName" AS ENUM ('SYSTEM_ADMIN', 'MUNICIPAL_PLANNER', 'DISPATCHER
 CREATE TYPE "VehicleStatus" AS ENUM ('ACTIVE', 'SUSPENDED', 'MAINTENANCE', 'INACTIVE');
 
 -- CreateEnum
-CREATE TYPE "QueueStatus" AS ENUM ('PENDING', 'DISPATCHED', 'SKIPPED', 'EXPIRED');
+CREATE TYPE "QueueStatus" AS ENUM ('WAITING', 'DISPATCHED', 'CANCELLED');
 
 -- CreateEnum
 CREATE TYPE "OverrideType" AS ENUM ('VEHICLE_SKIP', 'FORCE_DISPATCH', 'ROUTE_TEMPORARY_CHANGE');
@@ -13,20 +13,17 @@ CREATE TYPE "OverrideType" AS ENUM ('VEHICLE_SKIP', 'FORCE_DISPATCH', 'ROUTE_TEM
 -- CreateEnum
 CREATE TYPE "ViolationType" AS ENUM ('ROUTE_HOPPING', 'UNAUTHORIZED_TERMINAL', 'DUPLICATE_CHECKIN', 'SUSPICIOUS_INTERVAL');
 
--- CreateEnum
-CREATE TYPE "AssignmentStatus" AS ENUM ('ACTIVE', 'INACTIVE');
-
 -- CreateTable
 CREATE TABLE "users" (
     "id" TEXT NOT NULL,
     "username" TEXT NOT NULL,
     "email" TEXT NOT NULL,
-    "passwordHash" TEXT NOT NULL,
-    "pinHash" TEXT,
-    "roleName" "RoleName" NOT NULL,
-    "isActive" BOOLEAN NOT NULL DEFAULT true,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "password_hash" TEXT NOT NULL,
+    "pin_hash" TEXT,
+    "role_name" "RoleName" NOT NULL,
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "users_pkey" PRIMARY KEY ("id")
 );
@@ -37,9 +34,9 @@ CREATE TABLE "terminals" (
     "name" TEXT NOT NULL,
     "location" TEXT NOT NULL,
     "code" TEXT NOT NULL,
-    "isActive" BOOLEAN NOT NULL DEFAULT true,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "terminals_pkey" PRIMARY KEY ("id")
 );
@@ -58,8 +55,8 @@ CREATE TABLE "user_terminal_assignments" (
 CREATE TABLE "routes" (
     "id" TEXT NOT NULL,
     "code" TEXT NOT NULL,
-    "origin" TEXT NOT NULL,
-    "destination" TEXT NOT NULL,
+    "source_terminal_id" TEXT NOT NULL,
+    "destination_terminal_id" TEXT NOT NULL,
     "base_fare_etb" DECIMAL(10,2) NOT NULL,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -79,6 +76,17 @@ CREATE TABLE "terminal_routes" (
 );
 
 -- CreateTable
+CREATE TABLE "vehicle_groups" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "vehicle_groups_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "vehicles" (
     "id" TEXT NOT NULL,
     "plate_number" TEXT NOT NULL,
@@ -88,34 +96,48 @@ CREATE TABLE "vehicles" (
     "status" "VehicleStatus" NOT NULL DEFAULT 'ACTIVE',
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
+    "group_id" TEXT,
 
     CONSTRAINT "vehicles_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
-CREATE TABLE "vehicle_schedules" (
+CREATE TABLE "rosters" (
     "id" TEXT NOT NULL,
-    "vehicle_id" TEXT NOT NULL,
-    "terminal_id" TEXT NOT NULL,
-    "route_id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
     "week_number" INTEGER NOT NULL,
-    "valid_from" TIMESTAMP(3) NOT NULL,
-    "valid_until" TIMESTAMP(3) NOT NULL,
-    "status" "AssignmentStatus" NOT NULL DEFAULT 'ACTIVE',
-    "imported_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "start_date" TIMESTAMP(3) NOT NULL,
+    "end_date" TIMESTAMP(3) NOT NULL,
+    "is_active" BOOLEAN NOT NULL DEFAULT false,
+    "is_finalized" BOOLEAN NOT NULL DEFAULT false,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "vehicle_schedules_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "rosters_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
-CREATE TABLE "vehicle_route_assignments" (
+CREATE TABLE "roster_dispatcher_assignments" (
     "id" TEXT NOT NULL,
+    "roster_id" TEXT NOT NULL,
+    "dispatcher_id" TEXT NOT NULL,
+    "route_id" TEXT NOT NULL,
+    "terminal_id" TEXT NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "roster_dispatcher_assignments_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "roster_vehicle_assignments" (
+    "id" TEXT NOT NULL,
+    "roster_id" TEXT NOT NULL,
     "vehicle_id" TEXT NOT NULL,
     "route_id" TEXT NOT NULL,
-    "assigned_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "expires_at" TIMESTAMP(3) NOT NULL,
+    "terminal_id" TEXT NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "vehicle_route_assignments_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "roster_vehicle_assignments_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -125,7 +147,8 @@ CREATE TABLE "queue_entries" (
     "route_id" TEXT NOT NULL,
     "vehicle_id" TEXT NOT NULL,
     "check_in_time" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "status" "QueueStatus" NOT NULL DEFAULT 'PENDING',
+    "check_out_time" TIMESTAMP(3),
+    "status" "QueueStatus" NOT NULL DEFAULT 'WAITING',
     "sequence" INTEGER NOT NULL,
     "sync_id" TEXT,
 
@@ -139,6 +162,7 @@ CREATE TABLE "dispatch_records" (
     "route_id" TEXT NOT NULL,
     "vehicle_id" TEXT NOT NULL,
     "dispatcher_id" TEXT NOT NULL,
+    "check_in_time" TIMESTAMP(3) NOT NULL,
     "dispatch_time" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "fare_charged_etb" DECIMAL(10,2) NOT NULL,
     "municipal_commission" DECIMAL(10,2) NOT NULL DEFAULT 10.00,
@@ -228,6 +252,27 @@ CREATE TABLE "settings" (
     CONSTRAINT "settings_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "vehicle_plate_history" (
+    "id" TEXT NOT NULL,
+    "vehicle_id" TEXT NOT NULL,
+    "old_plate" TEXT NOT NULL,
+    "new_plate" TEXT NOT NULL,
+    "changed_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "vehicle_plate_history_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "pricing_rules" (
+    "id" TEXT NOT NULL,
+    "dispatcher_id" TEXT NOT NULL,
+    "fare_multiplier" DECIMAL(5,2) NOT NULL DEFAULT 1.0,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "pricing_rules_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "users_username_key" ON "users"("username");
 
@@ -250,16 +295,16 @@ CREATE UNIQUE INDEX "routes_code_key" ON "routes"("code");
 CREATE UNIQUE INDEX "terminal_routes_terminal_id_route_id_key" ON "terminal_routes"("terminal_id", "route_id");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "vehicle_groups_name_key" ON "vehicle_groups"("name");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "vehicles_plate_number_key" ON "vehicles"("plate_number");
 
 -- CreateIndex
-CREATE INDEX "vehicle_schedules_terminal_id_week_number_status_idx" ON "vehicle_schedules"("terminal_id", "week_number", "status");
+CREATE UNIQUE INDEX "roster_dispatcher_assignments_roster_id_dispatcher_id_route_id_terminal_id_key" ON "roster_dispatcher_assignments"("roster_id", "dispatcher_id", "route_id", "terminal_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "vehicle_schedules_vehicle_id_week_number_key" ON "vehicle_schedules"("vehicle_id", "week_number");
-
--- CreateIndex
-CREATE INDEX "vehicle_route_assignments_vehicle_id_route_id_idx" ON "vehicle_route_assignments"("vehicle_id", "route_id");
+CREATE UNIQUE INDEX "roster_vehicle_assignments_roster_id_vehicle_id_route_id_terminal_id_key" ON "roster_vehicle_assignments"("roster_id", "vehicle_id", "route_id", "terminal_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "queue_entries_sync_id_key" ON "queue_entries"("sync_id");
@@ -291,11 +336,20 @@ CREATE UNIQUE INDEX "device_bindings_device_uuid_key" ON "device_bindings"("devi
 -- CreateIndex
 CREATE UNIQUE INDEX "settings_key_key" ON "settings"("key");
 
+-- CreateIndex
+CREATE UNIQUE INDEX "pricing_rules_dispatcher_id_key" ON "pricing_rules"("dispatcher_id");
+
 -- AddForeignKey
 ALTER TABLE "user_terminal_assignments" ADD CONSTRAINT "user_terminal_assignments_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "user_terminal_assignments" ADD CONSTRAINT "user_terminal_assignments_terminal_id_fkey" FOREIGN KEY ("terminal_id") REFERENCES "terminals"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "routes" ADD CONSTRAINT "routes_source_terminal_id_fkey" FOREIGN KEY ("source_terminal_id") REFERENCES "terminals"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "routes" ADD CONSTRAINT "routes_destination_terminal_id_fkey" FOREIGN KEY ("destination_terminal_id") REFERENCES "terminals"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "terminal_routes" ADD CONSTRAINT "terminal_routes_terminal_id_fkey" FOREIGN KEY ("terminal_id") REFERENCES "terminals"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -304,19 +358,31 @@ ALTER TABLE "terminal_routes" ADD CONSTRAINT "terminal_routes_terminal_id_fkey" 
 ALTER TABLE "terminal_routes" ADD CONSTRAINT "terminal_routes_route_id_fkey" FOREIGN KEY ("route_id") REFERENCES "routes"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "vehicle_schedules" ADD CONSTRAINT "vehicle_schedules_vehicle_id_fkey" FOREIGN KEY ("vehicle_id") REFERENCES "vehicles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "vehicles" ADD CONSTRAINT "vehicles_group_id_fkey" FOREIGN KEY ("group_id") REFERENCES "vehicle_groups"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "vehicle_schedules" ADD CONSTRAINT "vehicle_schedules_terminal_id_fkey" FOREIGN KEY ("terminal_id") REFERENCES "terminals"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "roster_dispatcher_assignments" ADD CONSTRAINT "roster_dispatcher_assignments_roster_id_fkey" FOREIGN KEY ("roster_id") REFERENCES "rosters"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "vehicle_schedules" ADD CONSTRAINT "vehicle_schedules_route_id_fkey" FOREIGN KEY ("route_id") REFERENCES "routes"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "roster_dispatcher_assignments" ADD CONSTRAINT "roster_dispatcher_assignments_dispatcher_id_fkey" FOREIGN KEY ("dispatcher_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "vehicle_route_assignments" ADD CONSTRAINT "vehicle_route_assignments_vehicle_id_fkey" FOREIGN KEY ("vehicle_id") REFERENCES "vehicles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "roster_dispatcher_assignments" ADD CONSTRAINT "roster_dispatcher_assignments_route_id_fkey" FOREIGN KEY ("route_id") REFERENCES "routes"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "vehicle_route_assignments" ADD CONSTRAINT "vehicle_route_assignments_route_id_fkey" FOREIGN KEY ("route_id") REFERENCES "routes"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "roster_dispatcher_assignments" ADD CONSTRAINT "roster_dispatcher_assignments_terminal_id_fkey" FOREIGN KEY ("terminal_id") REFERENCES "terminals"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "roster_vehicle_assignments" ADD CONSTRAINT "roster_vehicle_assignments_roster_id_fkey" FOREIGN KEY ("roster_id") REFERENCES "rosters"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "roster_vehicle_assignments" ADD CONSTRAINT "roster_vehicle_assignments_vehicle_id_fkey" FOREIGN KEY ("vehicle_id") REFERENCES "vehicles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "roster_vehicle_assignments" ADD CONSTRAINT "roster_vehicle_assignments_route_id_fkey" FOREIGN KEY ("route_id") REFERENCES "routes"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "roster_vehicle_assignments" ADD CONSTRAINT "roster_vehicle_assignments_terminal_id_fkey" FOREIGN KEY ("terminal_id") REFERENCES "terminals"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "queue_entries" ADD CONSTRAINT "queue_entries_terminal_id_fkey" FOREIGN KEY ("terminal_id") REFERENCES "terminals"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -353,3 +419,9 @@ ALTER TABLE "device_bindings" ADD CONSTRAINT "device_bindings_terminal_id_fkey" 
 
 -- AddForeignKey
 ALTER TABLE "audit_logs" ADD CONSTRAINT "audit_logs_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "vehicle_plate_history" ADD CONSTRAINT "vehicle_plate_history_vehicle_id_fkey" FOREIGN KEY ("vehicle_id") REFERENCES "vehicles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "pricing_rules" ADD CONSTRAINT "pricing_rules_dispatcher_id_fkey" FOREIGN KEY ("dispatcher_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;

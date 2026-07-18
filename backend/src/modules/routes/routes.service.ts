@@ -20,14 +20,22 @@ export class RoutesService {
 
   async findAll() {
     return this.prisma.route.findMany({
-      include: { terminals: { include: { terminal: true } } },
+      include: {
+        sourceTerminal: true,
+        destinationTerminal: true,
+        terminals: { include: { terminal: true } },
+      },
     });
   }
 
   async findOne(id: string) {
     const route = await this.prisma.route.findUnique({
       where: { id },
-      include: { terminals: { include: { terminal: true } } },
+      include: {
+        sourceTerminal: true,
+        destinationTerminal: true,
+        terminals: { include: { terminal: true } },
+      },
     });
     if (!route) {
       throw new NotFoundException(`Route with ID ${id} not found`);

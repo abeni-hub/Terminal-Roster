@@ -7,15 +7,15 @@ export class CreateRouteDto {
   @IsString()
   code!: string;
 
-  @ApiProperty({ example: 'Megenagna' })
+  @ApiProperty({ example: 'terminal-uuid-1' })
   @IsNotEmpty()
   @IsString()
-  origin!: string;
+  sourceTerminalId!: string;
 
-  @ApiProperty({ example: 'Bole' })
+  @ApiProperty({ example: 'terminal-uuid-2' })
   @IsNotEmpty()
   @IsString()
-  destination!: string;
+  destinationTerminalId!: string;
 
   @ApiProperty({ example: 15.00 })
   @IsNotEmpty()
@@ -39,12 +39,12 @@ export class UpdateRouteDto {
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
-  origin?: string;
+  sourceTerminalId?: string;
 
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
-  destination?: string;
+  destinationTerminalId?: string;
 
   @ApiProperty({ required: false })
   @IsOptional()

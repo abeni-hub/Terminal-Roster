@@ -34,8 +34,9 @@ async function main() {
   await prisma.terminalRoute.deleteMany({});
   await prisma.userTerminalAssignment.deleteMany({});
   await prisma.user.deleteMany({});
-  await prisma.terminal.deleteMany({});
+  await prisma.vehicleGroup.deleteMany({});
   await prisma.route.deleteMany({});
+  await prisma.terminal.deleteMany({});
   await prisma.vehicle.deleteMany({});
   await (prisma as any).settings?.deleteMany({});
   console.log('  ✔ Existing data cleared.');
@@ -75,12 +76,14 @@ async function main() {
   console.log('  ✔ Users seeded (3).');
 
   // ── 2. TERMINALS ──────────────────────────────────────────────────────────
-  const [megenagna, merkato, kaliti, piassa, bole] = await Promise.all([
+  const [megenagna, merkato, kaliti, piassa, bole, saris, aratKilo] = await Promise.all([
     prisma.terminal.create({ data: { name: 'Megenagna Taxi Terminal', code: 'MEG-01', location: '9.0223,38.8021' } }),
     prisma.terminal.create({ data: { name: 'Merkato Taxi Terminal',  code: 'MRK-02', location: '9.0357,38.7469' } }),
     prisma.terminal.create({ data: { name: 'Kaliti Taxi Terminal',   code: 'KAL-03', location: '8.9502,38.7936' } }),
     prisma.terminal.create({ data: { name: 'Piassa Taxi Terminal',   code: 'PIA-04', location: '9.0374,38.7573' } }),
     prisma.terminal.create({ data: { name: 'Bole Taxi Terminal',     code: 'BOL-05', location: '8.9892,38.7884' } }),
+    prisma.terminal.create({ data: { name: 'Saris Taxi Terminal',    code: 'SAR-06', location: '8.9511,38.7612' } }),
+    prisma.terminal.create({ data: { name: 'Arat Kilo Taxi Terminal',code: 'ARA-07', location: '9.0366,38.7630' } }),
   ]);
   console.log('  ✔ Terminals seeded (5).');
 
@@ -93,11 +96,11 @@ async function main() {
   // ── 3. ROUTES ─────────────────────────────────────────────────────────────
   const [routeMegBole, routeMegPiassa, routeMrkPiassa, routeKalSaris, routePiaAratKilo] =
     await Promise.all([
-      prisma.route.create({ data: { code: 'R-001', origin: 'Megenagna', destination: 'Bole',      baseFareETB: 15.00 } }),
-      prisma.route.create({ data: { code: 'R-002', origin: 'Megenagna', destination: 'Piassa',    baseFareETB: 20.00 } }),
-      prisma.route.create({ data: { code: 'R-003', origin: 'Merkato',   destination: 'Piassa',    baseFareETB: 18.00 } }),
-      prisma.route.create({ data: { code: 'R-004', origin: 'Kaliti',    destination: 'Saris',     baseFareETB: 12.00 } }),
-      prisma.route.create({ data: { code: 'R-005', origin: 'Piassa',    destination: 'Arat Kilo', baseFareETB: 10.00 } }),
+      prisma.route.create({ data: { code: 'R-001', sourceTerminalId: megenagna.id, destinationTerminalId: bole.id,      baseFareETB: 15.00 } }),
+      prisma.route.create({ data: { code: 'R-002', sourceTerminalId: megenagna.id, destinationTerminalId: piassa.id,    baseFareETB: 20.00 } }),
+      prisma.route.create({ data: { code: 'R-003', sourceTerminalId: merkato.id,   destinationTerminalId: piassa.id,    baseFareETB: 18.00 } }),
+      prisma.route.create({ data: { code: 'R-004', sourceTerminalId: kaliti.id,    destinationTerminalId: saris.id,     baseFareETB: 12.00 } }),
+      prisma.route.create({ data: { code: 'R-005', sourceTerminalId: piassa.id,    destinationTerminalId: aratKilo.id, baseFareETB: 10.00 } }),
     ]);
   console.log('  ✔ Routes seeded (5).');
 
@@ -113,20 +116,50 @@ async function main() {
   });
   console.log('  ✔ Terminal-route links seeded (5).');
 
+  // ── 4.5. VEHICLE GROUPS ───────────────────────────────────────────────────
+  const groupA = await prisma.vehicleGroup.create({
+    data: {
+      name: 'Group A - Megenagna to Bole',
+      description: 'Vehicles assigned to Bole route',
+    }
+  });
+
+  const groupB = await prisma.vehicleGroup.create({
+    data: {
+      name: 'Group B - Megenagna to Piassa',
+      description: 'Vehicles assigned to Piassa route',
+    }
+  });
+
+  const groupC = await prisma.vehicleGroup.create({
+    data: {
+      name: 'Group C - Merkato to Piassa',
+      description: 'Vehicles assigned to Merkato route',
+    }
+  });
+
+  const groupD = await prisma.vehicleGroup.create({
+    data: {
+      name: 'Group D - Kaliti to Saris',
+      description: 'Vehicles assigned to Saris route',
+    }
+  });
+  console.log('  ✔ Vehicle groups seeded (4).');
+
   // ── 5. VEHICLES (12 from government CSV) ──────────────────────────────────
   const vehicleRows = [
-    { plateNumber: 'AA-2-B44910', ownerName: 'Bekele Alemu',     ownerPhone: '+251911000001' },
-    { plateNumber: 'AA-2-C29918', ownerName: 'Chalew Demissie',  ownerPhone: '+251911000002' },
-    { plateNumber: 'AA-2-A77615', ownerName: 'Abebe Worku',      ownerPhone: '+251911000003' },
-    { plateNumber: 'CODE2-89012', ownerName: 'Tesfaye Girma',    ownerPhone: '+251911000004' },
-    { plateNumber: 'AA-2-B9988',  ownerName: 'Birtukan Hailu',   ownerPhone: '+251911000005' },
-    { plateNumber: 'AA-2-X1122',  ownerName: 'Xinare Kebede',    ownerPhone: '+251911000006' },
-    { plateNumber: 'AA-2-E7890',  ownerName: 'Eden Tadesse',     ownerPhone: '+251911000011' },
-    { plateNumber: 'AA-2-F2345',  ownerName: 'Fikir Muleta',     ownerPhone: '+251911000012' },
-    { plateNumber: 'AA-3-A1234',  ownerName: 'Amara Tefera',     ownerPhone: '+251911000007' },
-    { plateNumber: 'AA-3-B5678',  ownerName: 'Belaynesh Assefa', ownerPhone: '+251911000008' },
-    { plateNumber: 'AA-4-C9012',  ownerName: 'Chernet Desta',    ownerPhone: '+251911000009' },
-    { plateNumber: 'AA-5-D3456',  ownerName: 'Dereje Fekadu',    ownerPhone: '+251911000010' },
+    { plateNumber: 'AA-2-B44910', ownerName: 'Bekele Alemu',     ownerPhone: '+251911000001', groupId: groupA.id },
+    { plateNumber: 'AA-2-C29918', ownerName: 'Chalew Demissie',  ownerPhone: '+251911000002', groupId: groupA.id },
+    { plateNumber: 'AA-2-A77615', ownerName: 'Abebe Worku',      ownerPhone: '+251911000003', groupId: groupA.id },
+    { plateNumber: 'CODE2-89012', ownerName: 'Tesfaye Girma',    ownerPhone: '+251911000004', groupId: groupB.id },
+    { plateNumber: 'AA-2-B9988',  ownerName: 'Birtukan Hailu',   ownerPhone: '+251911000005', groupId: groupB.id },
+    { plateNumber: 'AA-2-X1122',  ownerName: 'Xinare Kebede',    ownerPhone: '+251911000006', groupId: groupB.id },
+    { plateNumber: 'AA-2-E7890',  ownerName: 'Eden Tadesse',     ownerPhone: '+251911000011', groupId: groupC.id },
+    { plateNumber: 'AA-2-F2345',  ownerName: 'Fikir Muleta',     ownerPhone: '+251911000012', groupId: groupC.id },
+    { plateNumber: 'AA-3-A1234',  ownerName: 'Amara Tefera',     ownerPhone: '+251911000007', groupId: groupC.id },
+    { plateNumber: 'AA-3-B5678',  ownerName: 'Belaynesh Assefa', ownerPhone: '+251911000008', groupId: groupD.id },
+    { plateNumber: 'AA-4-C9012',  ownerName: 'Chernet Desta',    ownerPhone: '+251911000009', groupId: groupD.id },
+    { plateNumber: 'AA-5-D3456',  ownerName: 'Dereje Fekadu',    ownerPhone: '+251911000010', groupId: groupD.id },
   ];
   const createdVehicles = await Promise.all(
     vehicleRows.map(v => prisma.vehicle.create({ data: { ...v, capacity: 12, status: VehicleStatus.ACTIVE } })),
@@ -160,18 +193,18 @@ async function main() {
 
   await prisma.rosterVehicleAssignment.createMany({
     data: [
-      { rosterId: roster.id, vehicleId: vByPlate('AA-2-B44910').id, routeId: routeMegBole.id },
-      { rosterId: roster.id, vehicleId: vByPlate('AA-2-C29918').id, routeId: routeMegBole.id },
-      { rosterId: roster.id, vehicleId: vByPlate('AA-2-A77615').id, routeId: routeMegBole.id },
-      { rosterId: roster.id, vehicleId: vByPlate('CODE2-89012').id, routeId: routeMegBole.id },
-      { rosterId: roster.id, vehicleId: vByPlate('AA-2-B9988').id,  routeId: routeMegBole.id },
-      { rosterId: roster.id, vehicleId: vByPlate('AA-2-X1122').id,  routeId: routeMegBole.id },
-      { rosterId: roster.id, vehicleId: vByPlate('AA-3-A1234').id,  routeId: routeMrkPiassa.id },
-      { rosterId: roster.id, vehicleId: vByPlate('AA-3-B5678').id,  routeId: routeMrkPiassa.id },
-      { rosterId: roster.id, vehicleId: vByPlate('AA-4-C9012').id,  routeId: routeKalSaris.id },
-      { rosterId: roster.id, vehicleId: vByPlate('AA-5-D3456').id,  routeId: routePiaAratKilo.id },
-      { rosterId: roster.id, vehicleId: vByPlate('AA-2-E7890').id,  routeId: routeMegBole.id },
-      { rosterId: roster.id, vehicleId: vByPlate('AA-2-F2345').id,  routeId: routeMegBole.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-2-B44910').id, routeId: routeMegBole.id, terminalId: megenagna.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-2-C29918').id, routeId: routeMegBole.id, terminalId: megenagna.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-2-A77615').id, routeId: routeMegBole.id, terminalId: megenagna.id },
+      { rosterId: roster.id, vehicleId: vByPlate('CODE2-89012').id, routeId: routeMegBole.id, terminalId: megenagna.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-2-B9988').id,  routeId: routeMegBole.id, terminalId: megenagna.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-2-X1122').id,  routeId: routeMegBole.id, terminalId: megenagna.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-3-A1234').id,  routeId: routeMrkPiassa.id, terminalId: merkato.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-3-B5678').id,  routeId: routeMrkPiassa.id, terminalId: merkato.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-4-C9012').id,  routeId: routeKalSaris.id, terminalId: kaliti.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-5-D3456').id,  routeId: routePiaAratKilo.id, terminalId: piassa.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-2-E7890').id,  routeId: routeMegBole.id, terminalId: megenagna.id },
+      { rosterId: roster.id, vehicleId: vByPlate('AA-2-F2345').id,  routeId: routeMegBole.id, terminalId: megenagna.id },
     ],
   });
   console.log('  ✔ Weekly rosters and vehicle assignments seeded.');

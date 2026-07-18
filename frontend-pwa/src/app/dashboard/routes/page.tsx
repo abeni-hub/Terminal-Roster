@@ -2,14 +2,16 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
 interface Route {
   id: string;
   code: string;
-  origin: string;
-  destination: string;
+  sourceTerminalId: string;
+  destinationTerminalId: string;
   baseFareETB: number;
+  sourceTerminal: { name: string; code: string };
+  destinationTerminal: { name: string; code: string };
 }
 
 interface Terminal {
@@ -22,12 +24,13 @@ export default function RoutesPage() {
   const [routes, setRoutes] = useState<Route[]>([]);
   const [terminals, setTerminals] = useState<Terminal[]>([]);
   const [loading, setLoading] = useState(false);
+  const [originFilter, setOriginFilter] = useState('');
 
   // Form states
   const [editId, setEditId] = useState<string | null>(null);
   const [code, setCode] = useState('');
-  const [origin, setOrigin] = useState('');
-  const [destination, setDestination] = useState('');
+  const [sourceTerminalId, setSourceTerminalId] = useState('');
+  const [destinationTerminalId, setDestinationTerminalId] = useState('');
   const [baseFareETB, setBaseFareETB] = useState('');
   
   // Assign terminal state
@@ -90,8 +93,8 @@ export default function RoutesPage() {
         },
         body: JSON.stringify({
           code,
-          origin,
-          destination,
+          sourceTerminalId,
+          destinationTerminalId,
           baseFareETB: parseFloat(baseFareETB),
         }),
       });
@@ -99,8 +102,8 @@ export default function RoutesPage() {
       if (res.ok) {
         setMsg(editId ? 'Route updated successfully!' : 'Route registered successfully!');
         setCode('');
-        setOrigin('');
-        setDestination('');
+        setSourceTerminalId('');
+        setDestinationTerminalId('');
         setBaseFareETB('');
         setEditId(null);
         fetchRoutes();
@@ -117,8 +120,8 @@ export default function RoutesPage() {
   const handleEdit = (r: Route) => {
     setEditId(r.id);
     setCode(r.code);
-    setOrigin(r.origin);
-    setDestination(r.destination);
+    setSourceTerminalId(r.sourceTerminalId);
+    setDestinationTerminalId(r.destinationTerminalId);
     setBaseFareETB(r.baseFareETB.toString());
   };
 
@@ -203,27 +206,33 @@ export default function RoutesPage() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Origin</label>
-                <input
-                  type="text"
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Origin Terminal</label>
+                <select
                   required
-                  value={origin}
-                  onChange={(e) => setOrigin(e.target.value)}
-                  placeholder="e.g. Megenagna"
+                  value={sourceTerminalId}
+                  onChange={(e) => setSourceTerminalId(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                />
+                >
+                  <option value="" disabled>Select Origin Terminal...</option>
+                  {terminals.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name} ({t.code})</option>
+                  ))}
+                </select>
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Destination</label>
-                <input
-                  type="text"
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Destination Terminal</label>
+                <select
                   required
-                  value={destination}
-                  onChange={(e) => setDestination(e.target.value)}
-                  placeholder="e.g. Bole"
+                  value={destinationTerminalId}
+                  onChange={(e) => setDestinationTerminalId(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                />
+                >
+                  <option value="" disabled>Select Destination Terminal...</option>
+                  {terminals.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name} ({t.code})</option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -252,8 +261,8 @@ export default function RoutesPage() {
                     onClick={() => {
                       setEditId(null);
                       setCode('');
-                      setOrigin('');
-                      setDestination('');
+                      setSourceTerminalId('');
+                      setDestinationTerminalId('');
                       setBaseFareETB('');
                     }}
                     className="bg-slate-800 hover:bg-slate-750 text-slate-300 text-xs py-2 px-3 rounded-lg transition-all"
@@ -267,56 +276,88 @@ export default function RoutesPage() {
         </div>
 
         {/* List Pane */}
-        <div className="lg:col-span-2 bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-md">
-          <h3 className="text-sm font-bold text-white mb-4 uppercase tracking-wider">Active Routes List</h3>
+        <div className="lg:col-span-2 bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-md space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Active Routes List</h3>
+            
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Filter Origin</label>
+              <select
+                value={originFilter}
+                onChange={(e) => setOriginFilter(e.target.value)}
+                className="bg-slate-950 border border-slate-800 text-slate-100 rounded-lg text-xs px-3 py-1.5 focus:outline-none focus:border-indigo-500 font-medium"
+              >
+                <option value="">All Origins (Source Terminals)</option>
+                {Array.from(new Set(routes.map(r => r.sourceTerminal?.name).filter(Boolean))).map(originName => (
+                  <option key={originName} value={originName}>{originName}</option>
+                ))}
+              </select>
+            </div>
+          </div>
 
           {loading ? (
             <p className="text-slate-500 text-xs text-center py-10">Fetching routes...</p>
           ) : routes.length === 0 ? (
             <p className="text-slate-500 text-xs text-center py-10">No routes registered.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="border-b border-slate-800 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                    <th className="pb-3 pr-4">Code</th>
-                    <th className="pb-3 pr-4">Route Path</th>
-                    <th className="pb-3 pr-4">Base Fare</th>
-                    <th className="pb-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 text-slate-300 font-medium">
-                  {routes.map((r) => (
-                    <tr key={r.id} className="hover:bg-slate-900/30 transition-colors">
-                      <td className="py-3.5 pr-4 font-mono font-bold text-indigo-400">{r.code}</td>
-                      <td className="py-3.5 pr-4 text-slate-200">
-                        {r.origin} <span className="text-slate-500 mx-1">→</span> {r.destination}
-                      </td>
-                      <td className="py-3.5 pr-4 font-mono text-emerald-400 font-bold">{Number(r.baseFareETB).toFixed(2)} ETB</td>
-                      <td className="py-3.5 text-right space-x-2">
-                        <button
-                          onClick={() => setAssignRouteId(r.id)}
-                          className="bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 border border-emerald-500/10 text-[10px] py-1 px-2.5 rounded transition-all"
-                        >
-                          Assign Terminal
-                        </button>
-                        <button
-                          onClick={() => handleEdit(r)}
-                          className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] py-1 px-2.5 rounded transition-all"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleDelete(r.id)}
-                          className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/10 text-[10px] py-1 px-2.5 rounded transition-all"
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-6">
+              {/* Grouping by Origin */}
+              {Object.entries(
+                routes
+                  .filter(r => !originFilter || r.sourceTerminal?.name === originFilter)
+                  .reduce((acc, r) => {
+                    const originName = r.sourceTerminal?.name || 'Unknown';
+                    if (!acc[originName]) acc[originName] = [];
+                    acc[originName].push(r);
+                    return acc;
+                  }, {} as Record<string, Route[]>)
+              ).map(([originGroup, groupedRoutes]) => (
+                <div key={originGroup} className="space-y-2 border border-slate-800/40 bg-slate-950/20 rounded-xl p-4">
+                  <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-800/40">
+                    <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full"></span>
+                    From Source Terminal: <span className="text-slate-100">{originGroup}</span>
+                  </h4>
+                  
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                          <th className="pb-2 pr-4">Code</th>
+                          <th className="pb-2 pr-4">Destination</th>
+                          <th className="pb-2 pr-4">Base Fare</th>
+                          <th className="pb-2 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/30 text-slate-300 font-medium">
+                        {groupedRoutes.map((r) => (
+                          <tr key={r.id} className="hover:bg-slate-900/30 transition-colors">
+                            <td className="py-2.5 pr-4 font-mono font-bold text-slate-200">{r.code}</td>
+                            <td className="py-2.5 pr-4 text-slate-400">
+                              <span className="text-slate-500 text-[10px] mr-1">to</span> {r.destinationTerminal?.name || 'Unknown'}
+                            </td>
+                            <td className="py-2.5 pr-4 font-mono text-emerald-400 font-bold">{Number(r.baseFareETB).toFixed(2)} ETB</td>
+                            <td className="py-2.5 text-right space-x-2">
+                         
+                              <button
+                                onClick={() => handleEdit(r)}
+                                className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] py-1 px-2 rounded transition-all"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handleDelete(r.id)}
+                                className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/10 text-[10px] py-1 px-2 rounded transition-all"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

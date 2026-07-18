@@ -7,6 +7,19 @@ import { QueueStatus, VehicleStatus, ViolationType } from '@prisma/client';
 export class FifoQueueService {
   constructor(private prisma: PrismaService) {}
 
+  private sortQueueEntries<T extends { checkInTime: Date | string | number; sequence?: number | null }>(entries: T[]): T[] {
+    return [...entries].sort((a, b) => {
+      const aTime = a.checkInTime instanceof Date ? a.checkInTime.getTime() : new Date(a.checkInTime).getTime();
+      const bTime = b.checkInTime instanceof Date ? b.checkInTime.getTime() : new Date(b.checkInTime).getTime();
+
+      if (aTime !== bTime) {
+        return aTime - bTime;
+      }
+
+      return (a.sequence ?? 0) - (b.sequence ?? 0);
+    });
+  }
+
   async checkIn(dto: CheckInVehicleDto, userId?: string, userRole?: string) {
     if (dto.syncId) {
       const existing = await this.prisma.queueEntry.findUnique({
@@ -55,9 +68,11 @@ export class FifoQueueService {
         where: {
           rosterId: activeRoster.id,
           dispatcherId: userId,
+          terminalId: terminal.id,
+          routeId: route.id,
         },
       });
-      if (!assignment || assignment.terminalId !== terminal.id || assignment.routeId !== route.id) {
+      if (!assignment) {
         throw new BadRequestException('You are not authorized to check in vehicles for this terminal/route');
       }
     }
@@ -105,17 +120,15 @@ export class FifoQueueService {
     });
 
     if (!assignment) {
-      // Log Route Hopping Violation
+      // Log Route Hopping Violation but still allow the vehicle into the queue
       await this.prisma.violationRecord.create({
         data: {
           vehicleId: vehicle.id,
           violationType: ViolationType.ROUTE_HOPPING,
-          details: `Vehicle checked in to route ${route.id} at terminal ${terminal.id} without a valid weekly assignment.`,
+          details: `Vehicle checked in to route ${route.code} at terminal ${terminal.name} without a valid weekly assignment. Remark: ${dto.remark || 'None'}`,
           severityScore: 80, // Severity: High
         },
       });
-
-      throw new BadRequestException(`Vehicle is not assigned to this route on the current weekly roster`);
     }
 
     // 3. Ensure terminal has this route mapped
@@ -133,11 +146,10 @@ export class FifoQueueService {
         data: {
           vehicleId: vehicle.id,
           violationType: ViolationType.UNAUTHORIZED_TERMINAL,
-          details: `Vehicle checked in to route ${route.id} at terminal ${terminal.id} which does not serve this route.`,
+          details: `Vehicle checked in to route ${route.code} at terminal ${terminal.name} which does not serve this route. Remark: ${dto.remark || 'None'}`,
           severityScore: 75,
         },
       });
-      throw new BadRequestException('Terminal is not assigned to serve this route');
     }
 
     // 4. Determine monotonic sequence number for the day
@@ -202,25 +214,29 @@ export class FifoQueueService {
         where: {
           rosterId: activeRoster.id,
           dispatcherId,
+          terminalId: dto.terminalId,
+          routeId: dto.routeId,
         },
       });
-      if (!assignment || assignment.terminalId !== dto.terminalId || assignment.routeId !== dto.routeId) {
+      if (!assignment) {
         throw new BadRequestException('You are not authorized to dispatch vehicles from this terminal/route');
       }
     }
 
     // 1. Fetch current pending queue sorted strictly by entry timestamp and sequence
-    const queue = await this.prisma.queueEntry.findMany({
-      where: {
-        terminalId: dto.terminalId,
-        routeId: dto.routeId,
-        status: QueueStatus.WAITING,
-      },
-      orderBy: [
-        { checkInTime: 'asc' },
-        { sequence: 'asc' },
-      ],
-    });
+    const queue = this.sortQueueEntries(
+      await this.prisma.queueEntry.findMany({
+        where: {
+          terminalId: dto.terminalId,
+          routeId: dto.routeId,
+          status: QueueStatus.WAITING,
+        },
+        orderBy: [
+          { checkInTime: 'asc' },
+          { sequence: 'asc' },
+        ],
+      }),
+    );
 
     if (queue.length === 0) {
       throw new BadRequestException('The queue is empty');
@@ -247,7 +263,6 @@ export class FifoQueueService {
       );
     }
 
-    // 2. Fetch Route to get pricing/fare charged
     const route = await this.prisma.route.findUnique({
       where: { id: dto.routeId },
     });
@@ -255,6 +270,13 @@ export class FifoQueueService {
     if (!route) {
       throw new BadRequestException('Route not found');
     }
+
+    // Fetch dispatcher pricing rule if any
+    const pricingRule = await this.prisma.pricingRule.findUnique({
+      where: { dispatcherId },
+    });
+    const multiplier = pricingRule ? Number(pricingRule.fareMultiplier) : 1.0;
+    const finalFare = Number(route.baseFareETB) * multiplier;
 
     // 3. Atomically update queue status and create dispatch record
     return this.prisma.$transaction(async (tx) => {
@@ -272,7 +294,7 @@ export class FifoQueueService {
           vehicleId: vehicle.id,
           dispatcherId,
           checkInTime: firstInQueue.checkInTime,
-          fareChargedETB: route.baseFareETB,
+          fareChargedETB: finalFare,
           municipalCommission: 10.00, // 10 ETB
           platformCommission: 1.00,    // 1 ETB
           syncId: dto.syncId,
@@ -315,7 +337,7 @@ export class FifoQueueService {
       include: {
         vehicle: { select: { plateNumber: true, ownerName: true } },
         dispatcher: { select: { username: true } },
-        route: { select: { code: true, origin: true, destination: true } },
+        route: { select: { code: true, sourceTerminal: { select: { name: true } }, destinationTerminal: { select: { name: true } } } },
       },
     });
   }
@@ -328,18 +350,21 @@ export class FifoQueueService {
       if (!activeRoster) {
         return [];
       }
+
       const assignment = await this.prisma.rosterDispatcherAssignment.findFirst({
         where: {
           rosterId: activeRoster.id,
           dispatcherId: userId,
+          terminalId,
+          routeId,
         },
       });
-      if (!assignment || assignment.terminalId !== terminalId || assignment.routeId !== routeId) {
+      if (!assignment) {
         return [];
       }
     }
 
-    return this.prisma.queueEntry.findMany({
+    const queueEntries = await this.prisma.queueEntry.findMany({
       where: {
         terminalId,
         routeId,
@@ -350,8 +375,16 @@ export class FifoQueueService {
         { sequence: 'asc' },
       ],
       include: {
-        vehicle: true,
+        vehicle: {
+          include: {
+            violations: {
+              where: { resolved: false }
+            }
+          }
+        },
       },
     });
+
+    return this.sortQueueEntries(queueEntries);
   }
 }

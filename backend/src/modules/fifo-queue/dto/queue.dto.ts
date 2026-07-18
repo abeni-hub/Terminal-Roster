@@ -21,6 +21,11 @@ export class CheckInVehicleDto {
   @IsOptional()
   @IsString()
   syncId?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  remark?: string;
 }
 
 export class DispatchVehicleDto {

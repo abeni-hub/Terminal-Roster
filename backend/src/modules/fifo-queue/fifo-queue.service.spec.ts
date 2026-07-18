@@ -70,6 +70,9 @@ const mockPrisma = {
     findUnique: jest.fn(),
     create: jest.fn(),
   },
+  pricingRule: {
+    findUnique: jest.fn(),
+  },
   route: {
     findUnique: jest.fn(),
     findFirst: jest.fn(),
@@ -110,6 +113,7 @@ describe('FifoQueueService', () => {
     mockPrisma.violationRecord.create.mockReset();
     mockPrisma.dispatchRecord.findUnique.mockReset();
     mockPrisma.dispatchRecord.create.mockReset();
+    mockPrisma.pricingRule.findUnique.mockReset();
     mockPrisma.route.findUnique.mockReset();
     mockPrisma.route.findFirst.mockReset();
     mockPrisma.terminal.findFirst.mockReset();
@@ -126,6 +130,8 @@ describe('FifoQueueService', () => {
         plateNumber: plateQuery || mockVehicle.plateNumber,
       };
     });
+
+    mockPrisma.pricingRule.findUnique.mockResolvedValue(null);
 
     // Default mock implementation for resolving route by ID or code
     mockPrisma.route.findFirst.mockImplementation(async (args: any) => {
@@ -227,13 +233,16 @@ describe('FifoQueueService', () => {
       await expect(service.checkIn(dto)).rejects.toThrow(ConflictException);
     });
 
-    it('should throw BadRequestException and log ROUTE_HOPPING violation if vehicle has no valid roster assignment', async () => {
+    it('should queue the vehicle and log ROUTE_HOPPING violation if vehicle has no valid roster assignment', async () => {
       mockPrisma.vehicle.findUnique.mockResolvedValue(mockVehicle);
       mockPrisma.queueEntry.findFirst.mockResolvedValue(null);
       mockPrisma.rosterVehicleAssignment.findFirst.mockResolvedValue(null); // No roster assignment
+      mockPrisma.terminalRoute.findUnique.mockResolvedValue({ id: 'tr-1' });
+      mockPrisma.queueEntry.count.mockResolvedValue(0);
+      mockPrisma.queueEntry.create.mockResolvedValue({ ...mockQueueEntry, vehicle: mockVehicle });
       mockPrisma.violationRecord.create.mockResolvedValue({});
 
-      await expect(service.checkIn(dto)).rejects.toThrow(BadRequestException);
+      await expect(service.checkIn(dto)).resolves.toHaveProperty('id', 'queue-uuid-1');
 
       expect(mockPrisma.violationRecord.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -245,14 +254,16 @@ describe('FifoQueueService', () => {
       );
     });
 
-    it('should throw BadRequestException and log UNAUTHORIZED_TERMINAL violation if terminal does not serve the route', async () => {
+    it('should queue the vehicle and log UNAUTHORIZED_TERMINAL violation if terminal does not serve the route', async () => {
       mockPrisma.vehicle.findUnique.mockResolvedValue(mockVehicle);
       mockPrisma.queueEntry.findFirst.mockResolvedValue(null);
       mockPrisma.rosterVehicleAssignment.findFirst.mockResolvedValue({ id: 'assignment-1' });
       mockPrisma.terminalRoute.findUnique.mockResolvedValue(null); // Terminal NOT serving this route
+      mockPrisma.queueEntry.count.mockResolvedValue(0);
+      mockPrisma.queueEntry.create.mockResolvedValue({ ...mockQueueEntry, vehicle: mockVehicle });
       mockPrisma.violationRecord.create.mockResolvedValue({});
 
-      await expect(service.checkIn(dto)).rejects.toThrow(BadRequestException);
+      await expect(service.checkIn(dto)).resolves.toHaveProperty('id', 'queue-uuid-1');
 
       expect(mockPrisma.violationRecord.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -436,7 +447,43 @@ describe('FifoQueueService', () => {
           orderBy: [{ checkInTime: 'asc' }, { sequence: 'asc' }],
         }),
       );
-      expect(result).toEqual(unorderedEntries);
+      expect(result.map((entry: any) => entry.id)).toEqual(['q1', 'q2', 'q3']);
+    });
+
+    it('should sort entries in FIFO order even when Prisma returns them unsorted', async () => {
+      const unorderedEntries = [
+        { ...mockQueueEntry, id: 'q3', checkInTime: new Date('2026-06-13T08:05:00Z'), sequence: 3, vehicle: mockVehicle },
+        { ...mockQueueEntry, id: 'q1', checkInTime: new Date('2026-06-13T08:00:00Z'), sequence: 1, vehicle: mockVehicle },
+        { ...mockQueueEntry, id: 'q2', checkInTime: new Date('2026-06-13T08:02:00Z'), sequence: 2, vehicle: mockVehicle },
+      ];
+      mockPrisma.queueEntry.findMany.mockResolvedValue(unorderedEntries);
+
+      const result = await service.getLiveQueue('terminal-uuid-1', 'route-uuid-1');
+
+      expect(result.map((entry: any) => entry.id)).toEqual(['q1', 'q2', 'q3']);
+    });
+
+    it('should allow a dispatcher to view the live queue for the specific assigned terminal and route', async () => {
+      const queueEntries = [{ ...mockQueueEntry, vehicle: mockVehicle }];
+      mockPrisma.roster.findFirst.mockResolvedValue({ id: 'roster-1' });
+      mockPrisma.rosterDispatcherAssignment.findFirst.mockResolvedValue({
+        terminalId: 'terminal-uuid-1',
+        routeId: 'route-uuid-1',
+      });
+      mockPrisma.queueEntry.findMany.mockResolvedValue(queueEntries);
+
+      await service.getLiveQueue('terminal-uuid-1', 'route-uuid-1', 'dispatcher-1', 'DISPATCHER');
+
+      expect(mockPrisma.rosterDispatcherAssignment.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            rosterId: 'roster-1',
+            dispatcherId: 'dispatcher-1',
+            terminalId: 'terminal-uuid-1',
+            routeId: 'route-uuid-1',
+          }),
+        }),
+      );
     });
   });
 });

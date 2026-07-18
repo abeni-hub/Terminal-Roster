@@ -41,6 +41,7 @@ export interface LocalScheduleEntry {
   validUntil: string;  // ISO string
   status: 'ACTIVE' | 'INACTIVE';
   importedAt: string;
+  groupName?: string;
 }
 
 export interface LocalQueueEntry {
